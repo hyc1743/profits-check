@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -292,7 +293,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 "channelId": snapshot.channel_id,
                 "status": snapshot.status,
                 "totalValueUsd": str(snapshot.total_value_usd.quantize(__import__("decimal").Decimal("0.00000001"))),
-                "createdAt": snapshot.created_at.isoformat(),
+                "createdAt": snapshot.created_at.replace(tzinfo=UTC).isoformat(),
             }
             for snapshot in snapshots
         ]

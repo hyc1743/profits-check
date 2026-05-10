@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -310,7 +311,7 @@ def list_snapshot_runs(session: Session) -> list[dict[str, Any]]:
                 "id": run_id,
                 "status": status,
                 "totalValueUsd": quantize_decimal(total_value),
-                "createdAt": max(snapshot.created_at for snapshot in run_snapshots).isoformat(),
+                "createdAt": max(snapshot.created_at for snapshot in run_snapshots).replace(tzinfo=UTC).isoformat(),
                 "snapshotCount": len(run_snapshots),
             }
         )
