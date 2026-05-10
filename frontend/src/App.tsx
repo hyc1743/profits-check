@@ -1,0 +1,1234 @@
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm, useWatch } from 'react-hook-form'
+import { z } from 'zod'
+import type { EChartsOption } from 'echarts'
+
+import './App.css'
+import { ChartSurface } from './components/chart-surface'
+import { api, type ChannelResponse, type CreateChannelPayload, type ScheduleResponse, type SnapshotItem } from './lib/api'
+import { formatUsd, humanizeAccountScope, humanizeProvider, humanizeStatus } from './lib/format'
+
+const channelProviders = ['binance', 'gate', 'okx', 'bitget', 'bybit', 'aster', 'onchain', 'bsc'] as const
+const channelKinds = ['cex', 'dex', 'chain'] as const
+
+const channelSchema = z.object({
+  name: z.string().min(2),
+  provider: z.enum(channelProviders),
+  kind: z.enum(channelKinds),
+  apiKey: z.string().optional(),
+  apiSecret: z.string().optional(),
+  passphrase: z.string().optional(),
+  walletAddresses: z.string().optional(),
+})
+
+type ChannelFormValues = z.infer<typeof channelSchema>
+
+const scheduleSchema = z.object({
+  snapshotScheduleTimes: z
+    .string()
+    .min(1, '请输入至少一个时间。')
+    .refine(
+      (val) =>
+        val
+          .split(',')
+          .map((t) => t.trim())
+          .every((t) => /^\d{2}:\d{2}$/.test(t)),
+      '格式不正确，请使用 HH:MM，多个时间用逗号分隔。',
+    ),
+  okxDexApiKey: z.string().optional(),
+  okxDexApiSecret: z.string().optional(),
+  okxDexPassphrase: z.string().optional(),
+})
+
+type ScheduleFormInput = z.input<typeof scheduleSchema>
+type ScheduleFormValues = z.output<typeof scheduleSchema>
+
+const calendarWeekdays = ['日', '一', '二', '三', '四', '五', '六']
+const fallbackChartPalette = {
+  accent: '#c4572e',
+  accentSoft: 'rgba(196,87,46,0.25)',
+  accentFaint: 'rgba(196,87,46,0.02)',
+  ink: '#2f241c',
+}
+
+function hexToRgb(value: string) {
+  const normalized = value.replace('#', '')
+
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  }
+}
+
+function withAlpha(color: string, alpha: number) {
+  const rgb = hexToRgb(color)
+  return rgb ? `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})` : color
+}
+
+function toDateKey(value: string) {
+  return value.slice(0, 10)
+}
+
+function toMonthKey(value: string) {
+  return toDateKey(value).slice(0, 7)
+}
+
+function getSnapshotMonths(snapshots: Array<{ createdAt: string }>) {
+  return Array.from(new Set(snapshots.map((snapshot) => toMonthKey(snapshot.createdAt)))).sort()
+}
+
+function getEntryMonths(entries: Array<{ dateKey: string }>) {
+  return Array.from(new Set(entries.map((entry) => entry.dateKey.slice(0, 7)))).sort()
+}
+
+function getCalendarMonthDays(dateKey: string) {
+  if (!dateKey) {
+    return []
+  }
+
+  const [year, month] = dateKey.split('-').map(Number)
+  const firstDay = new Date(Date.UTC(year, month - 1, 1))
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const leadingBlankCount = firstDay.getUTCDay()
+
+  return [
+    ...Array.from({ length: leadingBlankCount }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1
+      return {
+        day,
+        dateKey: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+      }
+    }),
+  ]
+}
+
+function formatCalendarAssetValue(value: string | number) {
+  return String(Math.round(Number(value)))
+}
+
+function formatCompactCalendarAssetValue(value: string | number) {
+  const roundedValue = Math.round(Number(value))
+  const absValue = Math.abs(roundedValue)
+
+  if (absValue >= 1_000_000) {
+    return `${(roundedValue / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  }
+
+  if (absValue >= 100_000) {
+    return `${Math.round(roundedValue / 1_000)}k`
+  }
+
+  return String(roundedValue)
+}
+
+function getNextDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  date.setUTCDate(date.getUTCDate() + 1)
+  return date.toISOString().slice(0, 10)
+}
+
+function buildDailyProfitEntries(snapshots: SnapshotItem[]) {
+  const sortedSnapshots = [...snapshots].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+  return sortedSnapshots.slice(1).flatMap((snapshot, index) => {
+    const previousSnapshot = sortedSnapshots[index]
+    const previousDateKey = toDateKey(previousSnapshot.createdAt)
+    const currentDateKey = toDateKey(snapshot.createdAt)
+
+    if (getNextDateKey(previousDateKey) !== currentDateKey) {
+      return []
+    }
+
+    return [{
+      dateKey: previousDateKey,
+      value: Number(snapshot.totalValueUsd) - Number(previousSnapshot.totalValueUsd),
+    }]
+  })
+}
+
+function readChartPalette() {
+  if (typeof document === 'undefined') {
+    return fallbackChartPalette
+  }
+
+  const styles = getComputedStyle(document.documentElement)
+  const accent = styles.getPropertyValue('--accent').trim() || fallbackChartPalette.accent
+  const ink = styles.getPropertyValue('--ink').trim() || fallbackChartPalette.ink
+
+  return {
+    accent,
+    ink,
+    accentSoft: withAlpha(accent, 0.25),
+    accentFaint: withAlpha(accent, 0.02),
+  }
+}
+
+function App() {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false, refetchOnWindowFocus: false },
+        },
+      }),
+  )
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ProfitConsole />
+    </QueryClientProvider>
+  )
+}
+
+function ProfitConsole() {
+  const queryClient = useQueryClient()
+  const [chartPalette] = useState(readChartPalette)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showSnapshotEditor, setShowSnapshotEditor] = useState(false)
+  const [showAssetCalendar, setShowAssetCalendar] = useState(false)
+  const [showProfitCalendar, setShowProfitCalendar] = useState(false)
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
+  const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
+  const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
+  const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
+
+  const summaryQuery = useQuery({ queryKey: ['summary'], queryFn: api.getLatestSummary })
+  const liveSummaryQuery = useQuery({
+    queryKey: ['summary', 'live'],
+    queryFn: api.getLiveSummary,
+    enabled: false,
+  })
+  const channelsQuery = useQuery({ queryKey: ['channels'], queryFn: api.getChannels })
+  const snapshotsQuery = useQuery({ queryKey: ['snapshots'], queryFn: api.getSnapshots })
+  const scheduleQuery = useQuery({ queryKey: ['schedule'], queryFn: api.getSchedule })
+  const schedulerQuery = useQuery({ queryKey: ['scheduler'], queryFn: api.getScheduler })
+
+  const runSnapshotMutation = useMutation({
+    mutationFn: api.runSnapshot,
+    onSuccess: async (result) => {
+      setNotice(`快照执行完成，成功渠道 ${result.successCount} 个。`)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+        queryClient.invalidateQueries({ queryKey: ['snapshots'] }),
+      ])
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const schedulerMutation = useMutation({
+    mutationFn: api.updateScheduler,
+    onSuccess: (result) => {
+      queryClient.setQueryData(['scheduler'], result)
+      setNotice(result.enabled ? '定时快照已开启。' : '定时快照已停止。')
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const createChannelMutation = useMutation({
+    mutationFn: api.createChannel,
+    onSuccess: async () => {
+      setNotice('渠道配置已保存。')
+      await queryClient.invalidateQueries({ queryKey: ['channels'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const scheduleMutation = useMutation({
+    mutationFn: api.updateSchedule,
+    onSuccess: async () => {
+      setNotice('调度配置已更新。')
+      await queryClient.invalidateQueries({ queryKey: ['schedule'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const testChannelMutation = useMutation({
+    mutationFn: api.testChannel,
+    onSuccess: async () => {
+      setNotice('渠道连通性测试成功。')
+      await queryClient.invalidateQueries({ queryKey: ['channels'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const deleteChannelMutation = useMutation({
+    mutationFn: api.deleteChannel,
+    onSuccess: async () => {
+      setNotice('渠道已删除。')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['channels'] }),
+        queryClient.invalidateQueries({ queryKey: ['snapshots'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+      ])
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const deleteSnapshotMutation = useMutation({
+    mutationFn: api.deleteSnapshotRun,
+    onSuccess: async () => {
+      setPendingSnapshotDeleteId(null)
+      setNotice('快照数据已删除。')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['snapshots'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+      ])
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const updateChannelMutation = useMutation({
+    mutationFn: ({ id, ...payload }: CreateChannelPayload & { id: number }) =>
+      api.updateChannel(id, payload),
+    onSuccess: async () => {
+      setNotice('渠道已更新。')
+      setEditingChannel(null)
+      await queryClient.invalidateQueries({ queryKey: ['channels'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const displayData = liveSummaryQuery.data ?? summaryQuery.data
+  const snapshotRuns = snapshotsQuery.data ?? []
+  const hasSnapshots = snapshotRuns.length > 0
+  const firstSnapshot = snapshotRuns[0]
+  const latestSnapshot = snapshotRuns.at(-1)
+  const snapshotMonths = getSnapshotMonths(snapshotRuns)
+  const latestSnapshotMonth = latestSnapshot ? toMonthKey(latestSnapshot.createdAt) : ''
+  const calendarMonthKey = snapshotMonths.includes(selectedCalendarMonth)
+    ? selectedCalendarMonth
+    : latestSnapshotMonth
+  const calendarTitleId = `asset-calendar-${calendarMonthKey || 'empty'}`
+  const calendarDays = getCalendarMonthDays(calendarMonthKey)
+  const latestSnapshotByDate = new Map(
+    snapshotRuns.map((snapshot) => [toDateKey(snapshot.createdAt), snapshot]),
+  )
+  const profitEntries = buildDailyProfitEntries(snapshotRuns)
+  const profitMonths = getEntryMonths(profitEntries)
+  const latestProfitMonth = profitMonths.at(-1) ?? ''
+  const profitMonthKey = profitMonths.includes(selectedProfitMonth)
+    ? selectedProfitMonth
+    : latestProfitMonth
+  const profitYearKey = profitMonthKey.slice(0, 4)
+  const profitCalendarTitleId = `profit-calendar-${profitMonthKey || 'empty'}`
+  const profitCalendarDays = getCalendarMonthDays(profitMonthKey)
+  const profitByDate = new Map(profitEntries.map((entry) => [entry.dateKey, entry]))
+  const monthlyProfitTotal = profitEntries
+    .filter((entry) => entry.dateKey.startsWith(profitMonthKey))
+    .reduce((total, entry) => total + entry.value, 0)
+  const yearlyProfitTotal = profitEntries
+    .filter((entry) => entry.dateKey.startsWith(profitYearKey))
+    .reduce((total, entry) => total + entry.value, 0)
+  const schedulerEnabled = schedulerQuery.data?.enabled ?? false
+  const schedulerTimes = schedulerQuery.data?.snapshot_schedule_times ?? '08:00'
+  const totalValue = displayData?.totalValueUsd ?? null
+  const channelShareTotal = (displayData?.channels ?? []).reduce(
+    (total, channel) => total + Number(channel.latestSnapshotTotalUsd ?? 0),
+    0,
+  )
+  const channelShareItems = (displayData?.channels ?? [])
+    .map((channel) => {
+      const value = Number(channel.latestSnapshotTotalUsd ?? 0)
+      return {
+        name: channel.name,
+        value,
+        percent: channelShareTotal > 0 ? Math.round((value / channelShareTotal) * 100) : 0,
+      }
+    })
+    .filter((channel) => channel.value > 0)
+  const trendSummary = hasSnapshots && firstSnapshot && latestSnapshot
+    ? `最近 ${snapshotRuns.length} 次快照：${formatUsd(firstSnapshot.totalValueUsd)} 到 ${formatUsd(latestSnapshot.totalValueUsd)}`
+    : '保存一次快照后，这里会显示总资产变化。'
+  const assetTrendOption: EChartsOption = {
+    animation: true,
+    tooltip: { trigger: 'axis' },
+    xAxis: {
+      type: 'time',
+      axisLabel: { color: chartPalette.ink, fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: chartPalette.ink,
+        formatter: (v: number) => `$${(v / 1000).toFixed(1)}k`,
+      },
+    },
+    series: [
+      {
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        data:
+          snapshotRuns.map((s) => [
+            s.createdAt,
+            Number(s.totalValueUsd),
+          ]) ?? [],
+        lineStyle: { color: chartPalette.accent, width: 2 },
+        itemStyle: { color: chartPalette.accent },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: chartPalette.accentSoft },
+              { offset: 1, color: chartPalette.accentFaint },
+            ],
+          },
+        },
+      },
+    ],
+    grid: { left: 50, right: 20, top: 20, bottom: 40 },
+  }
+
+  return (
+    <main className="shell">
+      <div className="grain" aria-hidden="true" />
+      <div className="top-bar">
+        <div />
+        <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
+          设置
+        </button>
+      </div>
+
+      {notice ? (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      ) : null}
+
+      <section className="grid">
+        <article className="panel overview-panel">
+          <div className="panel-head">
+            <div className="overview-title">
+              <p className="panel-kicker">资产总览</p>
+              <h2>看清总资产和分布</h2>
+            </div>
+            <div className="action-group">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={async () => {
+                  const result = await liveSummaryQuery.refetch()
+                  if (result.error) {
+                    setNotice(result.error.message)
+                  } else {
+                    setNotice('实时资产已刷新。')
+                  }
+                }}
+                disabled={liveSummaryQuery.isFetching}
+              >
+                {liveSummaryQuery.isFetching ? '刷新中...' : '刷新资产'}
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => runSnapshotMutation.mutate()}
+                disabled={runSnapshotMutation.isPending}
+              >
+                {runSnapshotMutation.isPending ? '保存中...' : '保存快照'}
+              </button>
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={() => schedulerMutation.mutate(!schedulerEnabled)}
+                disabled={schedulerQuery.isLoading || schedulerMutation.isPending}
+              >
+                {schedulerMutation.isPending
+                  ? '更新中...'
+                  : schedulerEnabled
+                    ? '关闭自动快照'
+                    : '开启自动快照'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mini-metrics">
+            <Metric
+              label="总资产"
+              value={formatUsd(totalValue)}
+            />
+            <Metric label="自动快照" value={`${schedulerEnabled ? '开启' : '关闭'} · ${schedulerTimes}`} />
+          </div>
+
+          <div className="asset-trend-block">
+            <div className="asset-totals-head">
+              <h3>资产走势</h3>
+              <span>{trendSummary}</span>
+            </div>
+            <div className="chart-block">
+              {hasSnapshots ? (
+                <ChartSurface ariaLabel={`资产走势。${trendSummary}`} option={assetTrendOption}>
+                  <table aria-label="资产走势数据">
+                    <thead>
+                      <tr>
+                        <th>日期</th>
+                        <th>总资产</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {snapshotRuns.map((snapshot) => (
+                        <tr key={snapshot.id}>
+                          <td>{toDateKey(snapshot.createdAt)}</td>
+                          <td>{formatUsd(snapshot.totalValueUsd)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ChartSurface>
+              ) : (
+                <div className="empty-state">
+                  <strong>还没有快照</strong>
+                  <span>保存一次快照后，这里会显示总资产变化。</span>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={() => setShowAssetCalendar((current) => !current)}
+            >
+              日历查看
+            </button>
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={() => setShowSnapshotEditor((current) => !current)}
+            >
+              编辑快照
+            </button>
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={() => setShowProfitCalendar((current) => !current)}
+            >
+              利润查看
+            </button>
+            {showAssetCalendar ? (
+              <div className="calendar-panel" aria-label="资产日历">
+                {calendarDays.length > 0 ? (
+                  <>
+                    <div className="calendar-toolbar">
+                      <div className="calendar-copy">
+                        <h4 id={calendarTitleId}>{calendarMonthKey}</h4>
+                        <span>每日资产</span>
+                      </div>
+                      <label className="field calendar-month-field">
+                        <span>查看月份</span>
+                        <select
+                          value={calendarMonthKey}
+                          onChange={(event) => setSelectedCalendarMonth(event.target.value)}
+                        >
+                          {snapshotMonths.map((month) => (
+                            <option key={month} value={month}>
+                              {month}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="calendar-grid" role="grid" aria-labelledby={calendarTitleId}>
+                      {calendarWeekdays.map((weekday) => (
+                        <span key={weekday} className="calendar-weekday" role="columnheader">
+                          {weekday}
+                        </span>
+                      ))}
+                      {calendarDays.map((day, index) => {
+                        if (!day) {
+                          return <span key={`blank-${index}`} className="calendar-day calendar-day-empty" />
+                        }
+
+                        const snapshot = latestSnapshotByDate.get(day.dateKey)
+                        const assetValue = snapshot ? formatCalendarAssetValue(snapshot.totalValueUsd) : null
+                        const displayAssetValue = snapshot ? formatCompactCalendarAssetValue(snapshot.totalValueUsd) : null
+                        return (
+                          <div
+                            key={day.dateKey}
+                            className={assetValue ? 'calendar-day calendar-day-has-value' : 'calendar-day'}
+                            role="gridcell"
+                            aria-label={assetValue ? `${day.dateKey} 资产 ${assetValue}` : `${day.dateKey} 无快照`}
+                          >
+                            <span className="calendar-date">{day.day}</span>
+                            {displayAssetValue ? (
+                              <strong
+                                className="calendar-value"
+                                style={{ '--asset-digits': displayAssetValue.length } as CSSProperties}
+                              >
+                                {displayAssetValue}
+                              </strong>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="empty-copy">这一天没有保存的快照。</p>
+                )}
+              </div>
+            ) : null}
+            {showProfitCalendar ? (
+              <div className="calendar-panel profit-calendar-panel" aria-label="利润日历">
+                {profitCalendarDays.length > 0 ? (
+                  <>
+                    <div className="calendar-toolbar">
+                      <div className="calendar-copy">
+                        <h4 id={profitCalendarTitleId}>{profitMonthKey}</h4>
+                        <span>前日利润</span>
+                      </div>
+                      <label className="field calendar-month-field">
+                        <span>查看月份</span>
+                        <select
+                          value={profitMonthKey}
+                          onChange={(event) => setSelectedProfitMonth(event.target.value)}
+                        >
+                          {profitMonths.map((month) => (
+                            <option key={month} value={month}>
+                              {month}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="profit-summary-grid">
+                      <Metric label="月度利润" value={formatCompactCalendarAssetValue(monthlyProfitTotal)} />
+                      <Metric label="年度利润" value={formatCompactCalendarAssetValue(yearlyProfitTotal)} />
+                      <Metric label="统计年份" value={profitYearKey} />
+                    </div>
+                    <div className="calendar-grid" role="grid" aria-label={`${profitMonthKey} 利润`}>
+                      {calendarWeekdays.map((weekday) => (
+                        <span key={weekday} className="calendar-weekday" role="columnheader">
+                          {weekday}
+                        </span>
+                      ))}
+                      {profitCalendarDays.map((day, index) => {
+                        if (!day) {
+                          return <span key={`profit-blank-${index}`} className="calendar-day calendar-day-empty" />
+                        }
+
+                        const profit = profitByDate.get(day.dateKey)
+                        const roundedProfit = profit ? formatCalendarAssetValue(profit.value) : null
+                        const displayProfit = profit ? formatCompactCalendarAssetValue(profit.value) : null
+                        return (
+                          <div
+                            key={day.dateKey}
+                            className={profit ? 'calendar-day calendar-day-has-value profit-day' : 'calendar-day'}
+                            role="gridcell"
+                            aria-label={roundedProfit ? `${day.dateKey} 利润 ${roundedProfit}` : `${day.dateKey} 无利润数据`}
+                          >
+                            <span className="calendar-date">{day.day}</span>
+                            {displayProfit ? (
+                              <strong
+                                className="calendar-value"
+                                style={{ '--asset-digits': displayProfit.length } as CSSProperties}
+                              >
+                                {displayProfit}
+                              </strong>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="empty-copy">至少需要连续两天快照后，才能计算利润。</p>
+                )}
+              </div>
+            ) : null}
+            {showSnapshotEditor ? (
+              <div className="snapshot-list" aria-label="保存的快照">
+                {snapshotRuns.length === 0 ? (
+                  <p className="empty-copy">没有可编辑的快照。</p>
+                ) : null}
+                {snapshotRuns.map((snapshot) => {
+                  const isPendingDelete = pendingSnapshotDeleteId === snapshot.id
+                  return (
+                    <div key={snapshot.id} className="snapshot-item">
+                      <div className="snapshot-copy">
+                        <strong>{formatUsd(snapshot.totalValueUsd)}</strong>
+                        <span>{new Date(snapshot.createdAt).toLocaleString()}</span>
+                        <span>{`${snapshot.snapshotCount} 个渠道快照`}</span>
+                      </div>
+                      {isPendingDelete ? (
+                        <div className="confirm-delete">
+                          <span>将删除该时间点的所有渠道快照。此操作无法撤销。</span>
+                          <button
+                            type="button"
+                            className="button button-danger"
+                            onClick={() => deleteSnapshotMutation.mutate(snapshot.id)}
+                            disabled={deleteSnapshotMutation.isPending}
+                          >
+                            {`确认删除 ${formatUsd(snapshot.totalValueUsd)} 快照`}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-ghost"
+                            onClick={() => setPendingSnapshotDeleteId(null)}
+                            disabled={deleteSnapshotMutation.isPending}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button button-danger-ghost"
+                          onClick={() => setPendingSnapshotDeleteId(snapshot.id)}
+                        >
+                          {`删除 ${formatUsd(snapshot.totalValueUsd)} 快照`}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="distribution-block">
+            <div className="asset-totals-head">
+              <h3>资产分布</h3>
+              <span>渠道占比与账户类别。</span>
+            </div>
+            <div className="distribution-grid">
+              <div className="distribution-chart">
+                <h4>渠道占比</h4>
+                {channelShareItems.length > 0 ? (
+                  <>
+                    <ChartSurface
+                      ariaLabel="渠道资产占比"
+                      option={{
+                        animation: false,
+                        series: [
+                          {
+                            type: 'pie',
+                            radius: ['55%', '78%'],
+                            label: {
+                              color: chartPalette.ink,
+                              formatter: '{b} {d}%',
+                            },
+                            data:
+                              channelShareItems.map((channel) => ({
+                                name: channel.name,
+                                value: channel.value,
+                              })),
+                          },
+                        ],
+                      }}
+                    />
+                    <div className="channel-share-list" role="list" aria-label="渠道占比数据">
+                      {channelShareItems.map((channel) => (
+                        <div key={channel.name} className="channel-share-row" role="listitem">
+                          <strong>{channel.name}</strong>
+                          <span>{formatUsd(channel.value)}</span>
+                          <em>{`${channel.percent}%`}</em>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="empty-copy">暂无渠道占比数据。</p>
+                )}
+              </div>
+              <div className="account-list">
+                <h4>按账户类别</h4>
+                {(displayData?.accountCategoryTotals ?? []).map((item) => (
+                  <div key={`${item.channelName}-${item.accountScope}`} className="account-row">
+                    <div>
+                      <strong>{`${item.channelName} · ${humanizeAccountScope(item.accountScope)}`}</strong>
+                      <span>{`${humanizeProvider(item.provider)} · ${item.assetCount} 个币种`}</span>
+                    </div>
+                    <em>{formatUsd(item.valueUsd)}</em>
+                  </div>
+                ))}
+                {(displayData?.accountCategoryTotals ?? []).length === 0 ? (
+                  <p className="empty-copy">暂无账户分类数据。</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      {showSettings ? (
+        <SettingsDialog
+          channels={channelsQuery.data ?? []}
+          schedule={scheduleQuery.data}
+          editingChannel={editingChannel}
+          onCreateChannel={(payload) => {
+            if (editingChannel) {
+              updateChannelMutation.mutate({ id: editingChannel.id, ...payload })
+            } else {
+              createChannelMutation.mutate(payload)
+            }
+          }}
+          onEditChannel={setEditingChannel}
+          onTestChannel={(id) => testChannelMutation.mutate(id)}
+          onDeleteChannel={(id) => deleteChannelMutation.mutate(id)}
+          onSaveSchedule={(payload) => scheduleMutation.mutate(payload)}
+          isSavingChannel={createChannelMutation.isPending || updateChannelMutation.isPending}
+          isSavingSchedule={scheduleMutation.isPending}
+          onClose={() => { setShowSettings(false); setEditingChannel(null) }}
+        />
+      ) : null}
+    </main>
+  )
+}
+
+function SettingsDialog({
+  channels,
+  schedule,
+  editingChannel,
+  onCreateChannel,
+  onEditChannel,
+  onTestChannel,
+  onDeleteChannel,
+  onSaveSchedule,
+  isSavingChannel,
+  isSavingSchedule,
+  onClose,
+}: {
+  channels: ChannelResponse[]
+  schedule?: ScheduleResponse
+  editingChannel: ChannelResponse | null
+  onCreateChannel: (payload: CreateChannelPayload) => void
+  onEditChannel: (channel: ChannelResponse | null) => void
+  onTestChannel: (id: number) => void
+  onDeleteChannel: (id: number) => void
+  onSaveSchedule: (payload: ScheduleResponse) => void
+  isSavingChannel: boolean
+  isSavingSchedule: boolean
+  onClose: () => void
+}) {
+  const headingId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement
+    const firstInput = dialogRef.current?.querySelector<HTMLElement>(
+      'input, select, textarea, button, [tabindex]:not([tabindex="-1"])',
+    )
+    firstInput?.focus()
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (!focusable || focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      previousFocusRef.current?.focus()
+    }
+  }, [onClose])
+
+  const handleOverlayClick = useCallback(() => {
+    onClose()
+  }, [onClose])
+
+  const handleOverlayKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onClose()
+      }
+    },
+    [onClose],
+  )
+
+  return (
+    <div
+      className="settings-overlay"
+      role="button"
+      tabIndex={-1}
+      aria-label="关闭设置"
+      onClick={handleOverlayClick}
+      onKeyDown={handleOverlayKeyDown}
+    >
+      <div
+        ref={dialogRef}
+        className="settings-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="settings-header">
+          <h2 id={headingId}>设置</h2>
+          <button type="button" className="button button-secondary" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+
+        <div className="settings-body">
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="panel-kicker">渠道</p>
+                <h3>连接配置</h3>
+              </div>
+            </div>
+            <div className="channel-layout">
+              <ChannelList
+                channels={channels}
+                onTest={onTestChannel}
+                onDelete={onDeleteChannel}
+                onEdit={onEditChannel}
+              />
+              <ChannelForm
+                onSubmit={onCreateChannel}
+                isSaving={isSavingChannel}
+                editingChannel={editingChannel}
+                onCancelEdit={() => onEditChannel(null)}
+              />
+            </div>
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="panel-kicker">全局</p>
+                <h3>调度 & API</h3>
+              </div>
+            </div>
+            <ScheduleForm
+              defaultValues={schedule}
+              onSubmit={onSaveSchedule}
+              isSaving={isSavingSchedule}
+            />
+          </article>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function ChannelList({
+  channels,
+  onTest,
+  onDelete,
+  onEdit,
+}: {
+  channels: ChannelResponse[]
+  onTest: (channelId: number) => void
+  onDelete: (channelId: number) => void
+  onEdit: (channel: ChannelResponse) => void
+}) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
+
+  if (channels.length === 0) {
+    return (
+      <div className="channel-list">
+        <div className="empty-state" style={{ minHeight: '8rem' }}>
+          <strong>还没有渠道</strong>
+          <span>添加一个交易所或链上钱包开始使用。</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="channel-list">
+      {channels.map((channel) => (
+        <div key={channel.id} className="channel-card">
+          <div>
+            <p>{humanizeProvider(channel.provider)}</p>
+            <strong>{channel.name}</strong>
+          </div>
+          <span>{humanizeStatus(channel.lastTestStatus)}</span>
+          <button
+            type="button"
+            className="button button-secondary"
+            aria-label={`测试 ${channel.name}`}
+            onClick={() => onTest(channel.id)}
+          >
+            测试
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            aria-label={`编辑 ${channel.name}`}
+            onClick={() => onEdit(channel)}
+          >
+            编辑
+          </button>
+          {pendingDeleteId === channel.id ? (
+            <>
+              <button
+                type="button"
+                className="button button-danger"
+                aria-label={`确认删除 ${channel.name}`}
+                onClick={() => {
+                  onDelete(channel.id)
+                  setPendingDeleteId(null)
+                }}
+              >
+                确认
+              </button>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setPendingDeleteId(null)}
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="button button-secondary"
+              aria-label={`删除 ${channel.name}`}
+              onClick={() => setPendingDeleteId(channel.id)}
+            >
+              删除
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ChannelForm({
+  onSubmit,
+  isSaving,
+  editingChannel,
+  onCancelEdit,
+}: {
+  onSubmit: (payload: CreateChannelPayload) => void
+  isSaving: boolean
+  editingChannel?: ChannelResponse | null
+  onCancelEdit?: () => void
+}) {
+  const editingProvider = channelSchema.shape.provider.safeParse(editingChannel?.provider)
+  const editingKind = channelSchema.shape.kind.safeParse(editingChannel?.kind)
+  const form = useForm<ChannelFormValues>({
+    resolver: zodResolver(channelSchema),
+    defaultValues: editingChannel
+      ? {
+          name: editingChannel.name,
+          provider: editingProvider.success ? editingProvider.data : 'binance',
+          kind: editingKind.success ? editingKind.data : 'cex',
+          apiKey: '',
+          apiSecret: '',
+          passphrase: '',
+          walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
+        }
+      : {
+          name: '',
+          provider: 'binance',
+          kind: 'cex',
+          apiKey: '',
+          apiSecret: '',
+          passphrase: '',
+          walletAddresses: '',
+        },
+  })
+
+  const { register, handleSubmit, formState: { errors }, control } = form
+  const provider = useWatch({ control, name: 'provider' })
+  const apiKey = useWatch({ control, name: 'apiKey' })
+  const apiSecret = useWatch({ control, name: 'apiSecret' })
+  const isOnChain = provider === 'onchain' || provider === 'bsc'
+  const isAster = provider === 'aster'
+  const isPassphraseProvider = provider === 'okx' || provider === 'bitget'
+  const hasCexData = !!(apiKey || apiSecret)
+
+  return (
+    <form
+      className="editor-form"
+      onSubmit={handleSubmit((values) => {
+        const publicConfig: Record<string, unknown> = {}
+        const secretConfig: Record<string, string> = {}
+
+        if (isOnChain || isAster) {
+          publicConfig.walletAddresses = (values.walletAddresses ?? '')
+            .split('\n')
+            .map((item) => item.trim())
+            .filter(Boolean)
+        } else {
+          secretConfig.apiKey = values.apiKey ?? ''
+          secretConfig.apiSecret = values.apiSecret ?? ''
+          if (isPassphraseProvider && values.passphrase) {
+            secretConfig.passphrase = values.passphrase
+          }
+          publicConfig.accountType = 'spot'
+        }
+
+        onSubmit({
+          provider: values.provider,
+          kind: isOnChain ? 'chain' : values.kind,
+          name: values.name,
+          publicConfig,
+          secretConfig,
+        })
+      })}
+    >
+      <Field label="名称" error={errors.name?.message}>
+        <input {...register('name')} />
+      </Field>
+      <Field label="渠道" error={errors.provider?.message}>
+        <select {...register('provider')}>
+          <option value="binance">Binance</option>
+          <option value="gate">Gate</option>
+          <option value="okx">OKX</option>
+          <option value="bitget">Bitget</option>
+          <option value="bybit">Bybit</option>
+          <option value="aster">Aster</option>
+          <option value="onchain">On Chain</option>
+          <option value="bsc">BSC</option>
+        </select>
+      </Field>
+
+      {isOnChain || isAster ? (
+        <div className="field-switch">
+          {hasCexData ? (
+            <p className="field-switch-notice" role="alert">
+              已切换到钱包地址模式，之前输入的 API 密钥字段将被忽略。
+            </p>
+          ) : null}
+          <Field label="钱包地址" error={errors.walletAddresses?.message}>
+            <textarea rows={3} {...register('walletAddresses')} />
+          </Field>
+        </div>
+      ) : (
+        <div className="field-switch">
+          <Field label="API Key" error={errors.apiKey?.message}>
+            <input {...register('apiKey')} />
+          </Field>
+          <Field label="API Secret" error={errors.apiSecret?.message}>
+            <input type="password" {...register('apiSecret')} />
+          </Field>
+          {isPassphraseProvider ? (
+            <Field label="Passphrase" error={errors.passphrase?.message}>
+              <input type="password" {...register('passphrase')} />
+            </Field>
+          ) : null}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button type="submit" className="button button-primary" disabled={isSaving}>
+          {isSaving ? '保存中...' : editingChannel ? '更新渠道' : '保存渠道'}
+        </button>
+        {editingChannel ? (
+          <button type="button" className="button button-secondary" onClick={onCancelEdit}>
+            取消
+          </button>
+        ) : null}
+      </div>
+    </form>
+  )
+}
+
+function ScheduleForm({
+  defaultValues,
+  onSubmit,
+  isSaving,
+}: {
+  defaultValues?: ScheduleResponse
+  onSubmit: (payload: ScheduleResponse) => void
+  isSaving: boolean
+}) {
+  const timeHintId = useId()
+  const form = useForm<ScheduleFormInput, undefined, ScheduleFormValues>({
+    resolver: zodResolver(scheduleSchema),
+    defaultValues: defaultValues ?? {
+      snapshotScheduleTimes: '08:00',
+      okxDexApiKey: '',
+      okxDexApiSecret: '',
+      okxDexPassphrase: '',
+    },
+  })
+
+  const { register, handleSubmit, formState: { errors } } = form
+
+  return (
+    <form className="schedule-form" onSubmit={handleSubmit((values) => onSubmit(values))}>
+      <Field label="每日快照时间" error={errors.snapshotScheduleTimes?.message}>
+        <input
+          {...register('snapshotScheduleTimes')}
+          placeholder="08:00,20:00"
+          aria-describedby={timeHintId}
+        />
+        <span id={timeHintId} className="field-hint">
+          多个时间用逗号分隔，时区 UTC+8
+        </span>
+      </Field>
+      <details open>
+        <summary>OKX DEX 配置（用于 On Chain 渠道）</summary>
+        <Field label="OKX DEX API Key" error={errors.okxDexApiKey?.message}>
+          <input {...register('okxDexApiKey')} placeholder={defaultValues?.okxDexSecretConfigured ? '已配置' : '输入 API Key'} />
+        </Field>
+        <Field label="OKX DEX API Secret" error={errors.okxDexApiSecret?.message}>
+          <input type="password" {...register('okxDexApiSecret')} placeholder={defaultValues?.okxDexSecretConfigured ? '留空则不修改' : '输入 API Secret'} />
+        </Field>
+        <Field label="OKX DEX Passphrase" error={errors.okxDexPassphrase?.message}>
+          <input type="password" {...register('okxDexPassphrase')} placeholder={defaultValues?.okxDexSecretConfigured ? '留空则不修改' : '输入 Passphrase'} />
+        </Field>
+      </details>
+      <button type="submit" className="button button-primary" disabled={isSaving}>
+        {isSaving ? '保存中...' : '保存调度配置'}
+      </button>
+    </form>
+  )
+}
+
+function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
+  const errorId = useId()
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+      {error ? (
+        <span id={errorId} className="field-error" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </label>
+  )
+}
+
+export default App

@@ -1,0 +1,148 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  font-family: 'Instrument Sans', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #241913;
+  background:
+    radial-gradient(circle at top left, rgba(196, 87, 46, 0.12), transparent 26rem),
+    linear-gradient(180deg, #f8efe3 0%, #f1e5d6 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --paper: #fffaf2;
+  --ink: #241913;
+  --text-soft: #6d5a4d;
+  --accent: #c4572e;
+  --accent-strong: #9f411d;
+  --danger: #a83c2a;
+  --danger-strong: #7f2a1c;
+
+  /* border */
+  --border-strong: color-mix(in oklch, var(--ink) 18%, transparent);
+  --border-subtle: color-mix(in oklch, var(--ink) 12%, transparent);
+  --border-faint: color-mix(in oklch, var(--ink) 8%, transparent);
+  --border-input: color-mix(in oklch, var(--ink) 15%, transparent);
+  --border-mild: color-mix(in oklch, var(--ink) 16%, transparent);
+
+  /* surface */
+  --surface-card: color-mix(in oklch, var(--paper) 72%, white);
+  --surface-input: color-mix(in oklch, var(--paper) 70%, white);
+  --surface-topbar: color-mix(in oklch, var(--paper) 86%, white);
+  --surface-dialog: color-mix(in oklch, var(--paper) 96%, white);
+  --surface-panel-nested: color-mix(in oklch, var(--paper) 60%, white);
+  --surface-toggle: color-mix(in oklch, var(--paper) 72%, white);
+  --surface-overlay: color-mix(in oklch, var(--ink) 32%, transparent);
+  --surface-calendar: color-mix(in oklch, var(--paper) 86%, white);
+  --surface-raised: color-mix(in oklch, var(--paper) 92%, white);
+
+  /* shadow */
+  --shadow-panel: 0 1.5rem 4rem color-mix(in oklch, var(--ink) 8%, transparent);
+  --shadow-dialog: 0 24px 80px color-mix(in oklch, var(--ink) 14%, transparent);
+  --shadow-topbar: 0 20px 60px color-mix(in oklch, var(--ink) 8%, transparent);
+
+  /* radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.2rem;
+  --radius-xl: 2rem;
+  --radius-full: 999px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+strong {
+  color: var(--ink);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(3rem, 6vw, 5.6rem);
+  line-height: 0.95;
+}
+
+h2 {
+  font-size: clamp(1.6rem, 2vw, 2.4rem);
+}
+
+h3 {
+  font-size: 1.18rem;
+}
+
+p,
+span,
+label,
+td,
+th,
+dd,
+dt,
+button,
+input,
+em {
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

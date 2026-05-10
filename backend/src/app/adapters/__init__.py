@@ -1,0 +1,1 @@
+"""Legacy adapter compatibility layer."""
