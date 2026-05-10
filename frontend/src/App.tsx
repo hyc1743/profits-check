@@ -73,7 +73,9 @@ function withAlpha(color: string, alpha: number) {
 }
 
 function toDateKey(value: string) {
-  return value.slice(0, 10)
+  const d = new Date(value)
+  const utc8 = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  return utc8.toISOString().slice(0, 10)
 }
 
 function toMonthKey(value: string) {
@@ -353,10 +355,27 @@ function ProfitConsole() {
     : '保存一次快照后，这里会显示总资产变化。'
   const assetTrendOption: EChartsOption = {
     animation: true,
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: unknown) => {
+        const items = Array.isArray(params) ? params : [params]
+        const point = items[0] as { data: [string, number]; marker: string }
+        const utcTime = new Date(point.data[0]).getTime()
+        const d = new Date(utcTime + 8 * 60 * 60 * 1000)
+        const timeStr = d.toISOString().replace('T', ' ').slice(0, 19)
+        return `${timeStr}<br/>${point.marker} $${point.data[1].toLocaleString()}`
+      },
+    },
     xAxis: {
       type: 'time',
-      axisLabel: { color: chartPalette.ink, fontSize: 11 },
+      axisLabel: {
+        color: chartPalette.ink,
+        fontSize: 11,
+        formatter: (value: number) => {
+          const d = new Date(value + 8 * 60 * 60 * 1000)
+          return d.toISOString().replace('T', ' ').slice(5, 16)
+        },
+      },
     },
     yAxis: {
       type: 'value',
@@ -658,7 +677,7 @@ function ProfitConsole() {
                     <div key={snapshot.id} className="snapshot-item">
                       <div className="snapshot-copy">
                         <strong>{formatUsd(snapshot.totalValueUsd)}</strong>
-                        <span>{new Date(snapshot.createdAt).toLocaleString()}</span>
+                        <span>{new Date(snapshot.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</span>
                         <span>{`${snapshot.snapshotCount} 个渠道快照`}</span>
                       </div>
                       {isPendingDelete ? (
@@ -1051,9 +1070,9 @@ function ChannelForm({
           name: editingChannel.name,
           provider: editingProvider.success ? editingProvider.data : 'binance',
           kind: editingKind.success ? editingKind.data : 'cex',
-          apiKey: '',
-          apiSecret: '',
-          passphrase: '',
+          apiKey: editingChannel.secretConfigMask.apiKey || '',
+          apiSecret: editingChannel.secretConfigMask.apiSecret || '',
+          passphrase: editingChannel.secretConfigMask.passphrase || '',
           walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
         }
       : {
@@ -1069,6 +1088,32 @@ function ChannelForm({
 
   const { register, handleSubmit, formState: { errors }, control } = form
   const provider = useWatch({ control, name: 'provider' })
+
+  useEffect(() => {
+    if (editingChannel) {
+      const p = channelSchema.shape.provider.safeParse(editingChannel.provider)
+      const k = channelSchema.shape.kind.safeParse(editingChannel.kind)
+      form.reset({
+        name: editingChannel.name,
+        provider: p.success ? p.data : 'binance',
+        kind: k.success ? k.data : 'cex',
+        apiKey: editingChannel.secretConfigMask.apiKey || '',
+        apiSecret: editingChannel.secretConfigMask.apiSecret || '',
+        passphrase: editingChannel.secretConfigMask.passphrase || '',
+        walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
+      })
+    } else {
+      form.reset({
+        name: '',
+        provider: 'binance',
+        kind: 'cex',
+        apiKey: '',
+        apiSecret: '',
+        passphrase: '',
+        walletAddresses: '',
+      })
+    }
+  }, [editingChannel?.id, form])
   const apiKey = useWatch({ control, name: 'apiKey' })
   const apiSecret = useWatch({ control, name: 'apiSecret' })
   const isOnChain = provider === 'onchain' || provider === 'bsc'
@@ -1089,9 +1134,14 @@ function ChannelForm({
             .map((item) => item.trim())
             .filter(Boolean)
         } else {
-          secretConfig.apiKey = values.apiKey ?? ''
-          secretConfig.apiSecret = values.apiSecret ?? ''
-          if (isPassphraseProvider && values.passphrase) {
+          const masked = editingChannel?.secretConfigMask ?? {}
+          if (values.apiKey && values.apiKey !== masked.apiKey) {
+            secretConfig.apiKey = values.apiKey
+          }
+          if (values.apiSecret && values.apiSecret !== masked.apiSecret) {
+            secretConfig.apiSecret = values.apiSecret
+          }
+          if (isPassphraseProvider && values.passphrase && values.passphrase !== masked.passphrase) {
             secretConfig.passphrase = values.passphrase
           }
           publicConfig.accountType = 'spot'
@@ -1145,6 +1195,11 @@ function ChannelForm({
             <Field label="Passphrase" error={errors.passphrase?.message}>
               <input type="password" {...register('passphrase')} />
             </Field>
+          ) : null}
+          {editingChannel ? (
+            <p className="hint" style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
+              密钥已脱敏显示；留空或保持原样不会修改现有配置。
+            </p>
           ) : null}
         </div>
       )}

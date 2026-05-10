@@ -175,8 +175,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
         secret_config = payload.get("secretConfig") or payload.get("secrets")
         if secret_config is not None and secret_config:
-            encrypted = {key: cipher.encrypt(str(value)) for key, value in secret_config.items()}
-            channel.secret_config_encrypted = json.dumps(encrypted)
+            new_secrets = {key: cipher.encrypt(str(value)) for key, value in secret_config.items() if value}
+            if new_secrets:
+                try:
+                    existing = json.loads(channel.secret_config_encrypted or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    existing = {}
+                existing.update(new_secrets)
+                channel.secret_config_encrypted = json.dumps(existing)
 
         session.commit()
         session.refresh(channel)
