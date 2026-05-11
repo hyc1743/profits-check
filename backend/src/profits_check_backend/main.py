@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -67,8 +67,23 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             )
         )
 
+    def _has_snapshot_today(session: Session) -> bool:
+        now_utc = datetime.now(UTC)
+        utc8_today = (now_utc + timedelta(hours=8)).date()
+        cutoff = now_utc - timedelta(hours=48)
+        recent = list(session.scalars(select(Snapshot).where(Snapshot.created_at >= cutoff)))
+        for s in recent:
+            created = s.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            if (created + timedelta(hours=8)).date() == utc8_today:
+                return True
+        return False
+
     def run_scheduled_snapshot() -> None:
         with session_factory() as session:
+            if _has_snapshot_today(session):
+                return
             channels = list(
                 session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
             )

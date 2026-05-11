@@ -86,6 +86,16 @@ function getSnapshotMonths(snapshots: Array<{ createdAt: string }>) {
   return Array.from(new Set(snapshots.map((snapshot) => toMonthKey(snapshot.createdAt)))).sort()
 }
 
+function formatTrendAxisLabel(value: number) {
+  const d = new Date(value + 8 * 60 * 60 * 1000)
+  return d.toISOString().slice(5, 10)
+}
+
+function formatSnapshotTime(value: string) {
+  const d = new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000)
+  return d.toISOString().replace('T', ' ').slice(0, 19)
+}
+
 function getEntryMonths(entries: Array<{ dateKey: string }>) {
   return Array.from(new Set(entries.map((entry) => entry.dateKey.slice(0, 7)))).sort()
 }
@@ -357,24 +367,21 @@ function ProfitConsole() {
     animation: true,
     tooltip: {
       trigger: 'axis',
+      confine: true,
       formatter: (params: unknown) => {
         const items = Array.isArray(params) ? params : [params]
-        const point = items[0] as { data: [string, number]; marker: string }
-        const utcTime = new Date(point.data[0]).getTime()
-        const d = new Date(utcTime + 8 * 60 * 60 * 1000)
-        const timeStr = d.toISOString().replace('T', ' ').slice(0, 19)
-        return `${timeStr}<br/>${point.marker} $${point.data[1].toLocaleString()}`
+        const point = items[0] as { data: { value: number; createdAt: string }; marker: string }
+        return `${formatSnapshotTime(point.data.createdAt)}<br/>${point.marker} $${point.data.value.toLocaleString()}`
       },
     },
     xAxis: {
-      type: 'time',
+      type: 'category',
+      data: snapshotRuns.map((snapshot) => formatTrendAxisLabel(new Date(snapshot.createdAt).getTime())),
       axisLabel: {
         color: chartPalette.ink,
         fontSize: 11,
-        formatter: (value: number) => {
-          const d = new Date(value + 8 * 60 * 60 * 1000)
-          return d.toISOString().replace('T', ' ').slice(5, 16)
-        },
+        rotate: 30,
+        margin: 8,
       },
     },
     yAxis: {
@@ -391,10 +398,10 @@ function ProfitConsole() {
         symbol: 'circle',
         symbolSize: 6,
         data:
-          snapshotRuns.map((s) => [
-            s.createdAt,
-            Number(s.totalValueUsd),
-          ]) ?? [],
+          snapshotRuns.map((s) => ({
+            value: Number(s.totalValueUsd),
+            createdAt: s.createdAt,
+          })) ?? [],
         lineStyle: { color: chartPalette.accent, width: 2 },
         itemStyle: { color: chartPalette.accent },
         areaStyle: {
@@ -409,7 +416,7 @@ function ProfitConsole() {
         },
       },
     ],
-    grid: { left: 50, right: 20, top: 20, bottom: 40 },
+    grid: { left: 50, right: 20, top: 20, bottom: 50 },
   }
 
   return (
@@ -454,7 +461,14 @@ function ProfitConsole() {
               <button
                 type="button"
                 className="button button-primary"
-                onClick={() => runSnapshotMutation.mutate()}
+                onClick={() => {
+                  const todayKey = toDateKey(new Date().toISOString())
+                  const hasSnapshotToday = snapshotRuns.some((s) => toDateKey(s.createdAt) === todayKey)
+                  if (hasSnapshotToday && !window.confirm('今日已存在快照。继续保存会覆盖今天的快照。')) {
+                    return
+                  }
+                  runSnapshotMutation.mutate()
+                }}
                 disabled={runSnapshotMutation.isPending}
               >
                 {runSnapshotMutation.isPending ? '保存中...' : '保存快照'}
@@ -1113,7 +1127,7 @@ function ChannelForm({
         walletAddresses: '',
       })
     }
-  }, [editingChannel?.id, form])
+  }, [editingChannel, form])
   const apiKey = useWatch({ control, name: 'apiKey' })
   const apiSecret = useWatch({ control, name: 'apiSecret' })
   const isOnChain = provider === 'onchain' || provider === 'bsc'

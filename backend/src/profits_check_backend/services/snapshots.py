@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 from profits_check_backend.models import AppSetting, Channel, Snapshot, SnapshotAsset
 from profits_check_backend.providers.base import ProviderSnapshot
 from profits_check_backend.services.channels import decode_public_config, decode_secret_config
+
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _get_okx_dex_secrets(session: Session, cipher: object) -> dict[str, str]:
@@ -33,6 +36,12 @@ def quantize_decimal(value: Decimal | None) -> str | None:
     if value is None:
         return None
     return str(value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP))
+
+
+def snapshot_shanghai_date(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(SHANGHAI_TZ).date().isoformat()
 
 
 @dataclass(slots=True)
@@ -112,6 +121,13 @@ async def execute_snapshot_run(
     cipher,
     provider_builder,
 ) -> dict[str, Any]:
+    overwrite_date = snapshot_shanghai_date(datetime.now(UTC))
+    existing_runs = {
+        snapshot_run_key(snapshot)
+        for snapshot in session.scalars(select(Snapshot).order_by(Snapshot.id))
+        if snapshot_shanghai_date(snapshot.created_at) == overwrite_date
+    }
+
     snapshots: list[Snapshot] = []
     total_value = Decimal("0")
     success_count = 0
@@ -163,6 +179,12 @@ async def execute_snapshot_run(
             success_count += 1
         except Exception:
             failure_count += 1
+
+    if success_count > 0:
+        for existing_run_id in sorted(existing_runs):
+            for snapshot in snapshots_for_run(session, existing_run_id):
+                session.delete(snapshot)
+        session.flush()
 
     session.commit()
     return {

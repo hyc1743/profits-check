@@ -174,6 +174,89 @@ def test_snapshot_series_aggregates_and_deletes_whole_runs(client) -> None:
     assert client.get("/api/snapshots").json() == []
 
 
+def test_snapshot_run_overwrites_existing_run_for_same_shanghai_day(client) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.models import Snapshot
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    totals_by_run = [Decimal("3500"), Decimal("4200")]
+    current_run = {"index": 0}
+
+    class StubProvider:
+        def __init__(self, total: Decimal, asset_symbol: str) -> None:
+            self.total = total
+            self.asset_symbol = asset_symbol
+
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=self.total,
+                assets=[
+                    AssetBalance(
+                        asset_symbol=self.asset_symbol,
+                        quantity=Decimal("1"),
+                        value_usd=self.total,
+                        metadata={"source": "test", "type": "spot"},
+                    )
+                ],
+            )
+
+    def build_stub_provider(**kwargs):
+        channel_name = kwargs["channel_name"]
+        total = totals_by_run[current_run["index"]]
+        if channel_name == "Binance Main":
+            return StubProvider(total, "BTC")
+        return StubProvider(total + Decimal("500"), "ETH")
+
+    client.app.state.provider_builder = build_stub_provider
+
+    for name in ["Binance Main", "OKX Main"]:
+        response = client.post(
+            "/api/channels",
+            json={
+                "provider": "binance",
+                "kind": "cex",
+                "name": name,
+                "publicConfig": {"accountType": "spot"},
+                "secretConfig": {"apiKey": f"key-{name}", "apiSecret": f"secret-{name}"},
+            },
+        )
+        assert response.status_code == 201
+
+    first_run = client.post("/api/snapshots/run")
+    assert first_run.status_code == 200
+    first_run_id = first_run.json()["id"]
+    assert first_run.json()["totalValueUsd"] == "7500.00000000"
+
+    current_run["index"] = 1
+    second_run = client.post("/api/snapshots/run")
+    assert second_run.status_code == 200
+    second_run_id = second_run.json()["id"]
+    assert second_run.json()["totalValueUsd"] == "8900.00000000"
+
+    series_response = client.get("/api/snapshots/series")
+    assert series_response.status_code == 200
+    assert series_response.json() == [
+        {
+            "id": second_run_id,
+            "status": "success",
+            "totalValueUsd": "8900.00000000",
+            "createdAt": series_response.json()[0]["createdAt"],
+            "snapshotCount": 2,
+        }
+    ]
+
+    snapshots_response = client.get("/api/snapshots")
+    assert snapshots_response.status_code == 200
+    assert [item["runId"] for item in snapshots_response.json()] == [second_run_id, second_run_id]
+    assert all(item["runId"] != first_run_id for item in snapshots_response.json())
+
+    with client.app.state.session_factory() as session:
+        saved_snapshots = list(session.query(Snapshot).order_by(Snapshot.id))
+        assert len(saved_snapshots) == 2
+        assert {snapshot.run_id for snapshot in saved_snapshots} == {second_run_id}
+
+
 def test_live_summary_returns_total_without_creating_snapshot(client) -> None:
     from decimal import Decimal
 

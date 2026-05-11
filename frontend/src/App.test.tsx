@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as echarts from 'echarts'
 import { HttpResponse, http } from 'msw'
+import { vi } from 'vitest'
 
 import App from './App'
 import { server } from './test/setup'
@@ -332,4 +334,34 @@ test('shows previous-day profit calendar with monthly and yearly totals', async 
   expect(within(profitCalendar).getAllByText('1250')).toHaveLength(2)
   expect(within(profitCalendar).getByText('年度利润')).toBeInTheDocument()
   expect(within(profitCalendar).getByText('2026')).toBeInTheDocument()
+})
+
+test('uses every snapshot date as an asset trend x-axis label', async () => {
+  installHandlers()
+  server.use(
+    http.get('/api/snapshots/series', () =>
+      HttpResponse.json([
+        { id: 10, status: 'success', totalValueUsd: '46241.24000000', createdAt: '2026-05-10T14:11:00+00:00', snapshotCount: 6 },
+        { id: 11, status: 'success', totalValueUsd: '46625.63000000', createdAt: '2026-05-10T23:00:01+00:00', snapshotCount: 6 },
+      ]),
+    ),
+  )
+
+  render(<App />)
+
+  expect(await screen.findByText('46241.24 USD')).toBeInTheDocument()
+
+  const setOption = vi.mocked(echarts.init).mock.results.at(-1)?.value.setOption
+  expect(setOption).toHaveBeenCalled()
+
+  type AssetTrendOption = {
+    xAxis?: { type?: string; data?: string[] }
+  }
+
+  const assetTrendOption = vi.mocked(setOption!).mock.calls
+    .map(([option]: [unknown]) => option as AssetTrendOption)
+    .find((option: AssetTrendOption) => option.xAxis?.data?.includes('05-11'))
+
+  expect(assetTrendOption?.xAxis?.type).toBe('category')
+  expect(assetTrendOption?.xAxis?.data).toEqual(['05-10', '05-11'])
 })
