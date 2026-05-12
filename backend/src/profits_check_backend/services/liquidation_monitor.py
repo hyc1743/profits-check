@@ -21,8 +21,6 @@ from profits_check_backend.services.channels import (
 from profits_check_backend.services.snapshots import quantize_decimal
 
 LIQUIDATION_MONITOR_SETTING_KEY = "liquidationMonitorConfig"
-SUPPORTED_FREQUENCIES = {30, 60, 180, 300, 900, 1800, 3600}
-ALERT_COOLDOWN = timedelta(minutes=15)
 RECOVERY_BUFFER_PERCENT = Decimal("1")
 MONITORED_PROVIDERS = {"binance", "gate", "okx", "bitget", "bybit", "aster"}
 
@@ -33,6 +31,7 @@ class LiquidationMonitorConfig:
     alert_enabled: bool = False
     threshold_percent: Decimal = Decimal("5")
     check_interval_seconds: int = 60
+    alert_interval_seconds: int = 900
     miao_code: str = ""
 
 
@@ -42,8 +41,8 @@ def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, ob
         "alertEnabled": config.alert_enabled,
         "thresholdPercent": quantize_decimal(config.threshold_percent),
         "checkIntervalSeconds": config.check_interval_seconds,
+        "alertIntervalSeconds": config.alert_interval_seconds,
         "miaoCodeConfigured": bool(config.miao_code),
-        "supportedFrequencies": sorted(SUPPORTED_FREQUENCIES),
     }
 
 
@@ -57,9 +56,10 @@ def load_liquidation_monitor_config(
         miao_code = cipher.decrypt(str(payload["miaoCodeEncrypted"]))
     return LiquidationMonitorConfig(
         monitor_enabled=bool(payload.get("monitorEnabled", False)),
-        alert_enabled=bool(payload.get("alertEnabled", False)),
+        alert_enabled=bool(payload.get("alertEnabled", payload.get("monitorEnabled", False))),
         threshold_percent=Decimal(str(payload.get("thresholdPercent", "5"))),
         check_interval_seconds=int(payload.get("checkIntervalSeconds", 60)),
+        alert_interval_seconds=int(payload.get("alertIntervalSeconds", 900)),
         miao_code=miao_code,
     )
 
@@ -69,24 +69,29 @@ def save_liquidation_monitor_config(
     cipher: SecretCipher,
     *,
     monitor_enabled: bool,
-    alert_enabled: bool,
     threshold_percent: Decimal,
     check_interval_seconds: int,
+    alert_interval_seconds: int,
     miao_code: str | None,
 ) -> LiquidationMonitorConfig:
-    if check_interval_seconds not in SUPPORTED_FREQUENCIES:
-        raise ValueError("Unsupported liquidation monitor frequency")
+    if check_interval_seconds <= 0:
+        raise ValueError("Liquidation monitor frequency must be greater than 0")
+    if alert_interval_seconds <= 0:
+        raise ValueError("Liquidation alert frequency must be greater than 0")
     if threshold_percent <= 0:
         raise ValueError("Liquidation threshold must be greater than 0")
+    if threshold_percent != threshold_percent.to_integral_value():
+        raise ValueError("Liquidation threshold must be an integer")
 
     setting = get_or_create_setting(session, LIQUIDATION_MONITOR_SETTING_KEY, "{}")
     existing = json.loads(setting.value_json or "{}")
     existing.update(
         {
             "monitorEnabled": monitor_enabled,
-            "alertEnabled": alert_enabled,
+            "alertEnabled": monitor_enabled,
             "thresholdPercent": str(threshold_percent),
             "checkIntervalSeconds": check_interval_seconds,
+            "alertIntervalSeconds": alert_interval_seconds,
         }
     )
     if miao_code is not None:
@@ -144,7 +149,11 @@ async def run_liquidation_monitor(
                 now=now,
             )
             seen_keys.add((model.channel_id, model.symbol, model.side))
-            if config.alert_enabled and config.miao_code and should_send_alert(model, now):
+            if (
+                config.alert_enabled
+                and config.miao_code
+                and should_send_alert(model, now, config.alert_interval_seconds)
+            ):
                 alert_result = await send_miaotixing_alert(config.miao_code, alert_text(model))
                 model.last_alert_status = alert_result["status"]
                 model.last_alert_error = alert_result.get("error")
@@ -230,7 +239,9 @@ def upsert_liquidation_position(
     return model
 
 
-def should_send_alert(position: LiquidationPosition, now: datetime) -> bool:
+def should_send_alert(
+    position: LiquidationPosition, now: datetime, alert_interval_seconds: int
+) -> bool:
     if position.status != "warning":
         return False
     if position.last_alert_at is None:
@@ -238,7 +249,7 @@ def should_send_alert(position: LiquidationPosition, now: datetime) -> bool:
     last_alert_at = position.last_alert_at
     if last_alert_at.tzinfo is None:
         last_alert_at = last_alert_at.replace(tzinfo=UTC)
-    return now - last_alert_at >= ALERT_COOLDOWN
+    return now - last_alert_at >= timedelta(seconds=alert_interval_seconds)
 
 
 def alert_text(position: LiquidationPosition) -> str:

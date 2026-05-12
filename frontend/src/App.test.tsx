@@ -91,8 +91,8 @@ const liquidationMonitorPayload = {
     alertEnabled: false,
     thresholdPercent: '5.00000000',
     checkIntervalSeconds: 60,
+    alertIntervalSeconds: 900,
     miaoCodeConfigured: false,
-    supportedFrequencies: [30, 60, 180, 300, 900, 1800, 3600],
   },
   positions: [
     {
@@ -275,6 +275,36 @@ test('shows liquidation risk positions and can refresh them', async () => {
   await waitFor(() => expect(refreshCount).toBe(1))
 })
 
+test('shows infinity and no-risk copy when liquidation price is unavailable', async () => {
+  installHandlers()
+  server.use(
+    http.get('/api/liquidation-monitor', () =>
+      HttpResponse.json({
+        ...liquidationMonitorPayload,
+        positions: [
+          {
+            ...liquidationMonitorPayload.positions[0],
+            id: 2,
+            side: 'BOTH',
+            liquidationPrice: null,
+            distancePercent: null,
+            status: 'unavailable',
+            lastAlertStatus: null,
+          },
+        ],
+      }),
+    ),
+  )
+
+  render(<App />)
+
+  expect(await screen.findByText('主账户 · BTCUSDT')).toBeInTheDocument()
+  expect(screen.getByText('BOTH · 无爆仓风险')).toBeInTheDocument()
+  expect(screen.getAllByText('∞')).toHaveLength(2)
+  expect(screen.queryByText('清算价不可用')).not.toBeInTheDocument()
+  expect(screen.queryByText('未估值')).not.toBeInTheDocument()
+})
+
 test('saves liquidation monitor switches frequency threshold and test alert', async () => {
   installHandlers()
   const monitorUpdates: Array<Record<string, unknown>> = []
@@ -302,11 +332,14 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '设置' }))
-  await user.click(screen.getByLabelText('开启监控'))
-  await user.click(screen.getByLabelText('开启电话提醒'))
+  await user.click(screen.getByLabelText('开启监控及电话提醒'))
+  expect(screen.queryByLabelText('开启电话提醒')).not.toBeInTheDocument()
   await user.clear(screen.getByLabelText('提醒阈值'))
-  await user.type(screen.getByLabelText('提醒阈值'), '1.5')
-  await user.selectOptions(screen.getByLabelText('监控频率'), '300')
+  await user.type(screen.getByLabelText('提醒阈值'), '2')
+  await user.clear(screen.getByLabelText('监控频率'))
+  await user.type(screen.getByLabelText('监控频率'), '45')
+  await user.clear(screen.getByLabelText('提醒频率'))
+  await user.type(screen.getByLabelText('提醒频率'), '120')
   await user.type(screen.getByLabelText('喵码'), 'miao-123')
   await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
 
@@ -314,9 +347,9 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
     expect(monitorUpdates).toEqual([
       {
         monitorEnabled: true,
-        alertEnabled: true,
-        thresholdPercent: '1.5',
-        checkIntervalSeconds: 300,
+        thresholdPercent: '2',
+        checkIntervalSeconds: 45,
+        alertIntervalSeconds: 120,
         miaoCode: 'miao-123',
       },
     ]),

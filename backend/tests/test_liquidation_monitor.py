@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import select
+
+from profits_check_backend.models import Channel
 from profits_check_backend.providers.base import ContractPositionRisk
+from profits_check_backend.services.liquidation_monitor import run_liquidation_monitor
 
 
 def position(
@@ -42,14 +48,15 @@ def test_liquidation_monitor_config_round_trips(client) -> None:
     assert initial.json()["config"]["alertEnabled"] is False
     assert initial.json()["config"]["thresholdPercent"] == "5.00000000"
     assert initial.json()["config"]["checkIntervalSeconds"] == 60
+    assert initial.json()["config"]["alertIntervalSeconds"] == 900
 
     response = client.put(
         "/api/liquidation-monitor",
         json={
             "monitorEnabled": True,
-            "alertEnabled": True,
-            "thresholdPercent": "1.5",
-            "checkIntervalSeconds": 300,
+            "thresholdPercent": "2",
+            "checkIntervalSeconds": 45,
+            "alertIntervalSeconds": 120,
             "miaoCode": "miao-123",
         },
     )
@@ -58,25 +65,26 @@ def test_liquidation_monitor_config_round_trips(client) -> None:
     payload = response.json()
     assert payload["config"]["monitorEnabled"] is True
     assert payload["config"]["alertEnabled"] is True
-    assert payload["config"]["thresholdPercent"] == "1.50000000"
-    assert payload["config"]["checkIntervalSeconds"] == 300
+    assert payload["config"]["thresholdPercent"] == "2.00000000"
+    assert payload["config"]["checkIntervalSeconds"] == 45
+    assert payload["config"]["alertIntervalSeconds"] == 120
     assert payload["config"]["miaoCodeConfigured"] is True
     assert "miaoCode" not in payload["config"]
 
 
-def test_liquidation_monitor_rejects_unsupported_frequency(client) -> None:
+def test_liquidation_monitor_rejects_fractional_threshold(client) -> None:
     response = client.put(
         "/api/liquidation-monitor",
         json={
             "monitorEnabled": True,
-            "alertEnabled": False,
-            "thresholdPercent": "5",
-            "checkIntervalSeconds": 45,
+            "thresholdPercent": "1.5",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
         },
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Unsupported liquidation monitor frequency"
+    assert response.json()["detail"] == "Liquidation threshold must be an integer"
 
 
 def test_manual_refresh_collects_positions_and_does_not_alert_when_alerts_disabled(client) -> None:
@@ -100,9 +108,9 @@ def test_manual_refresh_collects_positions_and_does_not_alert_when_alerts_disabl
         "/api/liquidation-monitor",
         json={
             "monitorEnabled": False,
-            "alertEnabled": False,
             "thresholdPercent": "1",
             "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
         },
     )
     assert update_response.status_code == 200
@@ -137,9 +145,9 @@ def test_manual_refresh_triggers_miaotixing_when_alerts_enabled(client, httpx_mo
         "/api/liquidation-monitor",
         json={
             "monitorEnabled": True,
-            "alertEnabled": True,
             "thresholdPercent": "1",
             "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
             "miaoCode": "miao-123",
         },
     )
@@ -161,14 +169,74 @@ def test_manual_refresh_triggers_miaotixing_when_alerts_enabled(client, httpx_mo
     assert payload["positions"][0]["lastAlertStatus"] == "sent"
 
 
+def test_liquidation_monitor_uses_configured_alert_interval(client, httpx_mock) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return [position()]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "thresholdPercent": "1",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+            "miaoCode": "miao-123",
+        },
+    )
+    for _ in range(2):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://miaotixing.com/trigger",
+            json={
+                "code": 0,
+                "msg": "完成",
+                "data": {"success_sent": {"mptext": 1, "sms": 0, "phonecall": 1}},
+            },
+        )
+
+    now = datetime(2026, 5, 12, 8, 0, tzinfo=UTC)
+    def run_at(timestamp):
+        with client.app.state.session_factory() as session:
+            channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=client.app.state.cipher,
+                    provider_builder=client.app.state.provider_builder,
+                    now=timestamp,
+                )
+            )
+
+    first = run_at(now)
+    second = run_at(now + timedelta(seconds=119))
+    third = run_at(now + timedelta(seconds=120))
+
+    assert first["alertCount"] == 1
+    assert second["alertCount"] == 0
+    assert third["alertCount"] == 1
+
+
 def test_liquidation_monitor_test_alert_uses_configured_miao_code(client, httpx_mock) -> None:
     client.put(
         "/api/liquidation-monitor",
         json={
             "monitorEnabled": False,
-            "alertEnabled": True,
             "thresholdPercent": "5",
             "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
             "miaoCode": "miao-123",
         },
     )

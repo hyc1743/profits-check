@@ -83,8 +83,8 @@ export interface LiquidationMonitorConfig {
   alertEnabled: boolean
   thresholdPercent: string
   checkIntervalSeconds: number
+  alertIntervalSeconds: number
   miaoCodeConfigured: boolean
-  supportedFrequencies: number[]
 }
 
 export interface LiquidationPositionResponse {
@@ -120,9 +120,9 @@ export interface LiquidationMonitorResponse {
 
 export interface UpdateLiquidationMonitorPayload {
   monitorEnabled: boolean
-  alertEnabled: boolean
   thresholdPercent: string
   checkIntervalSeconds: number
+  alertIntervalSeconds: number
   miaoCode?: string
 }
 

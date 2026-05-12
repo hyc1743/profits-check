@@ -58,9 +58,9 @@ type ScheduleFormValues = z.output<typeof scheduleSchema>
 
 const liquidationMonitorSchema = z.object({
   monitorEnabled: z.boolean(),
-  alertEnabled: z.boolean(),
-  thresholdPercent: z.string().min(1, '请输入提醒阈值。'),
-  checkIntervalSeconds: z.coerce.number(),
+  thresholdPercent: z.string().regex(/^[1-9]\d*$/, '提醒阈值必须是正整数。'),
+  checkIntervalSeconds: z.coerce.number().int().positive('监控频率必须是正整数秒。'),
+  alertIntervalSeconds: z.coerce.number().int().positive('提醒频率必须是正整数秒。'),
   miaoCode: z.string().optional(),
 })
 
@@ -129,9 +129,17 @@ function formatPercent(value: string | number | null | undefined, digits = 4) {
   return `${numeric.toFixed(digits)}%`
 }
 
+function formatLiquidationRiskPercent(value: string | number | null | undefined) {
+  return value === null || value === undefined ? '∞' : formatPercent(value)
+}
+
+function formatLiquidationPrice(value: string | number | null | undefined) {
+  return value === null || value === undefined ? '∞' : formatUsd(value)
+}
+
 function humanizeRiskStatus(value: string | null | undefined) {
   if (value === 'warning') return '接近爆仓'
-  if (value === 'unavailable') return '清算价不可用'
+  if (value === 'unavailable') return '无爆仓风险'
   if (value === 'ok') return '正常'
   return value || '未检测'
 }
@@ -1281,7 +1289,7 @@ function LiquidationRiskPanel({
               </div>
               <div className="risk-metric">
                 <span>距离</span>
-                <strong>{formatPercent(position.distancePercent)}</strong>
+                <strong>{formatLiquidationRiskPercent(position.distancePercent)}</strong>
               </div>
               <div className="risk-metric">
                 <span>标记价</span>
@@ -1289,7 +1297,7 @@ function LiquidationRiskPanel({
               </div>
               <div className="risk-metric">
                 <span>清算价</span>
-                <strong>{formatUsd(position.liquidationPrice)}</strong>
+                <strong>{formatLiquidationPrice(position.liquidationPrice)}</strong>
               </div>
               <div className="risk-alert">
                 {humanizeAlertStatus(position.lastAlertStatus)}
@@ -1632,9 +1640,9 @@ function LiquidationMonitorForm({
     resolver: zodResolver(liquidationMonitorSchema),
     defaultValues: {
       monitorEnabled: config?.monitorEnabled ?? false,
-      alertEnabled: config?.alertEnabled ?? false,
       thresholdPercent: config?.thresholdPercent ?? '5',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
+      alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
     },
   })
@@ -1643,9 +1651,9 @@ function LiquidationMonitorForm({
   useEffect(() => {
     reset({
       monitorEnabled: config?.monitorEnabled ?? false,
-      alertEnabled: config?.alertEnabled ?? false,
       thresholdPercent: config?.thresholdPercent ?? '5',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
+      alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
     })
   }, [config, reset])
@@ -1657,9 +1665,9 @@ function LiquidationMonitorForm({
         const miaoCode = values.miaoCode?.trim()
         onSubmit({
           monitorEnabled: values.monitorEnabled,
-          alertEnabled: values.alertEnabled,
           thresholdPercent: values.thresholdPercent,
           checkIntervalSeconds: values.checkIntervalSeconds,
+          alertIntervalSeconds: values.alertIntervalSeconds,
           ...(miaoCode ? { miaoCode } : {}),
         })
       })}
@@ -1667,24 +1675,17 @@ function LiquidationMonitorForm({
       <div className="toggle-row">
         <label className="toggle-label">
           <input type="checkbox" {...register('monitorEnabled')} />
-          开启监控
-        </label>
-        <label className="toggle-label">
-          <input type="checkbox" {...register('alertEnabled')} />
-          开启电话提醒
+          开启监控及电话提醒
         </label>
       </div>
       <Field label="提醒阈值" error={errors.thresholdPercent?.message}>
-        <input type="number" step="0.0001" min="0" {...register('thresholdPercent')} />
+        <input type="number" step="1" min="1" {...register('thresholdPercent')} />
       </Field>
       <Field label="监控频率" error={errors.checkIntervalSeconds?.message}>
-        <select {...register('checkIntervalSeconds', { valueAsNumber: true })}>
-          {(config?.supportedFrequencies ?? [30, 60, 180, 300, 900, 1800, 3600]).map((seconds) => (
-            <option key={seconds} value={seconds}>
-              {formatFrequency(seconds)}
-            </option>
-          ))}
-        </select>
+        <input type="number" step="1" min="1" {...register('checkIntervalSeconds', { valueAsNumber: true })} />
+      </Field>
+      <Field label="提醒频率" error={errors.alertIntervalSeconds?.message}>
+        <input type="number" step="1" min="1" {...register('alertIntervalSeconds', { valueAsNumber: true })} />
       </Field>
       <Field label="喵码" error={errors.miaoCode?.message}>
         <input

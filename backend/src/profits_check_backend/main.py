@@ -183,9 +183,9 @@ class LiquidationMonitorPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     monitor_enabled: bool = Field(alias="monitorEnabled")
-    alert_enabled: bool = Field(alias="alertEnabled")
     threshold_percent: Decimal = Field(alias="thresholdPercent", gt=0)
-    check_interval_seconds: int = Field(alias="checkIntervalSeconds")
+    check_interval_seconds: int = Field(alias="checkIntervalSeconds", gt=0)
+    alert_interval_seconds: int = Field(alias="alertIntervalSeconds", gt=0)
     miao_code: str | None = Field(default=None, alias="miaoCode", max_length=256)
 
 
@@ -555,9 +555,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 session,
                 cipher,
                 monitor_enabled=payload.monitor_enabled,
-                alert_enabled=payload.alert_enabled,
                 threshold_percent=payload.threshold_percent,
                 check_interval_seconds=payload.check_interval_seconds,
+                alert_interval_seconds=payload.alert_interval_seconds,
                 miao_code=payload.miao_code,
             )
         except ValueError as exc:
