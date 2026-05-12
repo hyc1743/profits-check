@@ -71,3 +71,53 @@ def test_ensure_tool_installs_when_missing(monkeypatch) -> None:
     run_dev.ensure_tool("uv", "https://example.invalid/uv.sh", {"PATH": "/tmp/bin"})
 
     assert calls == ["uv"]
+
+
+def test_sync_dependencies_skips_when_stamp_matches(tmp_path, monkeypatch) -> None:
+    run_dev = load_run_dev()
+    required_path = tmp_path / ".venv"
+    stamp_path = required_path / ".profits-check-sync"
+    lock_file = tmp_path / "uv.lock"
+    required_path.mkdir()
+    lock_file.write_text("locked")
+    signature = run_dev.dependency_signature([lock_file])
+    stamp_path.write_text(signature)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(run_dev, "run_command", lambda command, _cwd, _env: calls.append(command))
+
+    run_dev.sync_dependencies(
+        label="backend",
+        command=["uv", "sync"],
+        cwd=tmp_path,
+        env={"PATH": ""},
+        required_path=required_path,
+        stamp_path=stamp_path,
+        signature_paths=[lock_file],
+    )
+
+    assert calls == []
+
+
+def test_sync_dependencies_installs_when_lock_changes(tmp_path, monkeypatch) -> None:
+    run_dev = load_run_dev()
+    required_path = tmp_path / "node_modules"
+    stamp_path = required_path / ".profits-check-install"
+    lock_file = tmp_path / "bun.lock"
+    required_path.mkdir()
+    lock_file.write_text("new-lock")
+    stamp_path.write_text("old-lock")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(run_dev, "run_command", lambda command, _cwd, _env: calls.append(command))
+
+    run_dev.sync_dependencies(
+        label="frontend",
+        command=["bun", "install"],
+        cwd=tmp_path,
+        env={"PATH": ""},
+        required_path=required_path,
+        stamp_path=stamp_path,
+        signature_paths=[lock_file],
+    )
+
+    assert calls == [["bun", "install"]]
+    assert stamp_path.read_text() == run_dev.dependency_signature([lock_file])

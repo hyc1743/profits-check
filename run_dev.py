@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import getpass
+import hashlib
 import os
 import signal
 import subprocess
@@ -22,6 +23,8 @@ COMMON_BIN_DIRS = [
     Path.home() / ".bun" / "bin",
     Path.home() / ".cargo" / "bin",
 ]
+BACKEND_STAMP = BACKEND_DIR / ".venv" / ".profits-check-sync"
+FRONTEND_STAMP = FRONTEND_DIR / "node_modules" / ".profits-check-install"
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
@@ -107,6 +110,45 @@ def ensure_tool(name: str, install_url: str, env: dict[str, str]) -> None:
         raise RuntimeError(f"{name} was installed but is still not available on PATH.")
 
 
+def file_digest(path: Path) -> str:
+    if not path.exists():
+        return "missing"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def dependency_signature(paths: list[Path]) -> str:
+    return "\n".join(f"{path.name}:{file_digest(path)}" for path in paths)
+
+
+def dependencies_are_current(required_path: Path, stamp_path: Path, signature: str) -> bool:
+    return required_path.exists() and stamp_path.exists() and stamp_path.read_text() == signature
+
+
+def write_dependency_stamp(stamp_path: Path, signature: str) -> None:
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    stamp_path.write_text(signature)
+
+
+def sync_dependencies(
+    *,
+    label: str,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    required_path: Path,
+    stamp_path: Path,
+    signature_paths: list[Path],
+) -> None:
+    signature = dependency_signature(signature_paths)
+    if dependencies_are_current(required_path, stamp_path, signature):
+        print(f"{label} dependencies are already installed.")
+        return
+
+    print(f"Installing {label} dependencies...")
+    run_command(command, cwd, env)
+    write_dependency_stamp(stamp_path, signature)
+
+
 def stream_output(name: str, process: subprocess.Popen[str]) -> None:
     assert process.stdout is not None
     for line in process.stdout:
@@ -154,11 +196,24 @@ def main() -> int:
     print("Installing Python 3.12 if needed...")
     run_command(["uv", "python", "install", "3.12"], ROOT, env)
 
-    print("Installing backend dependencies...")
-    run_command(["uv", "sync"], BACKEND_DIR, env)
-
-    print("Installing frontend dependencies...")
-    run_command(["bun", "install"], FRONTEND_DIR, env)
+    sync_dependencies(
+        label="backend",
+        command=["uv", "sync"],
+        cwd=BACKEND_DIR,
+        env=env,
+        required_path=BACKEND_DIR / ".venv",
+        stamp_path=BACKEND_STAMP,
+        signature_paths=[BACKEND_DIR / "pyproject.toml", BACKEND_DIR / "uv.lock"],
+    )
+    sync_dependencies(
+        label="frontend",
+        command=["bun", "install"],
+        cwd=FRONTEND_DIR,
+        env=env,
+        required_path=FRONTEND_DIR / "node_modules",
+        stamp_path=FRONTEND_STAMP,
+        signature_paths=[FRONTEND_DIR / "package.json", FRONTEND_DIR / "bun.lock"],
+    )
 
     print(f"Starting backend on {backend_url}")
     backend = start_process(
