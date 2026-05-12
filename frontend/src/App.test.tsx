@@ -347,7 +347,7 @@ test('switches channel form fields for onchain and runs manual snapshot', async 
   })
 })
 
-test('allows Aster channels to save wallet and futures API credentials', async () => {
+test('allows Aster channels to save wallet and API wallet credentials', async () => {
   installHandlers()
   const createdPayloads: Array<Record<string, unknown>> = []
   server.use(
@@ -365,8 +365,9 @@ test('allows Aster channels to save wallet and futures API credentials', async (
   await user.type(await screen.findByLabelText('名称'), 'AsterMain')
   await user.selectOptions(screen.getByLabelText('渠道'), 'aster')
   await user.type(screen.getByLabelText('钱包地址'), '0x1111111111111111111111111111111111111111')
-  await user.type(screen.getByLabelText('API Key'), 'aster-key')
-  await user.type(screen.getByLabelText('API Secret'), 'aster-secret')
+  await user.type(screen.getByLabelText('User Wallet'), '0x2222222222222222222222222222222222222222')
+  await user.type(screen.getByLabelText('Signer Wallet'), '0x3333333333333333333333333333333333333333')
+  await user.type(screen.getByLabelText('Private Key'), 'aster-private-key')
   await user.click(screen.getByRole('button', { name: '保存渠道' }))
 
   await waitFor(() => expect(createdPayloads).toHaveLength(1))
@@ -375,7 +376,11 @@ test('allows Aster channels to save wallet and futures API credentials', async (
     kind: 'cex',
     name: 'AsterMain',
     publicConfig: { walletAddresses: ['0x1111111111111111111111111111111111111111'] },
-    secretConfig: { apiKey: 'aster-key', apiSecret: 'aster-secret' },
+    secretConfig: {
+      user: '0x2222222222222222222222222222222222222222',
+      signer: '0x3333333333333333333333333333333333333333',
+      privateKey: 'aster-private-key',
+    },
   })
 })
 

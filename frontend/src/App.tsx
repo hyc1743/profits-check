@@ -28,6 +28,9 @@ const channelSchema = z.object({
   apiKey: z.string().optional(),
   apiSecret: z.string().optional(),
   passphrase: z.string().optional(),
+  asterUser: z.string().optional(),
+  asterSigner: z.string().optional(),
+  asterPrivateKey: z.string().optional(),
   walletAddresses: z.string().optional(),
 })
 
@@ -1427,6 +1430,9 @@ function ChannelForm({
           apiKey: editingChannel.secretConfigMask.apiKey || '',
           apiSecret: editingChannel.secretConfigMask.apiSecret || '',
           passphrase: editingChannel.secretConfigMask.passphrase || '',
+          asterUser: editingChannel.secretConfigMask.user || '',
+          asterSigner: editingChannel.secretConfigMask.signer || '',
+          asterPrivateKey: editingChannel.secretConfigMask.privateKey || '',
           walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
         }
       : {
@@ -1436,6 +1442,9 @@ function ChannelForm({
           apiKey: '',
           apiSecret: '',
           passphrase: '',
+          asterUser: '',
+          asterSigner: '',
+          asterPrivateKey: '',
           walletAddresses: '',
         },
   })
@@ -1454,6 +1463,9 @@ function ChannelForm({
         apiKey: editingChannel.secretConfigMask.apiKey || '',
         apiSecret: editingChannel.secretConfigMask.apiSecret || '',
         passphrase: editingChannel.secretConfigMask.passphrase || '',
+        asterUser: editingChannel.secretConfigMask.user || '',
+        asterSigner: editingChannel.secretConfigMask.signer || '',
+        asterPrivateKey: editingChannel.secretConfigMask.privateKey || '',
         walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
       })
     } else {
@@ -1464,6 +1476,9 @@ function ChannelForm({
         apiKey: '',
         apiSecret: '',
         passphrase: '',
+        asterUser: '',
+        asterSigner: '',
+        asterPrivateKey: '',
         walletAddresses: '',
       })
     }
@@ -1490,7 +1505,18 @@ function ChannelForm({
             .filter(Boolean)
         }
 
-        if (!isOnChain) {
+        if (isAster) {
+          const masked = editingChannel?.secretConfigMask ?? {}
+          if (values.asterUser && values.asterUser !== masked.user) {
+            secretConfig.user = values.asterUser
+          }
+          if (values.asterSigner && values.asterSigner !== masked.signer) {
+            secretConfig.signer = values.asterSigner
+          }
+          if (values.asterPrivateKey && values.asterPrivateKey !== masked.privateKey) {
+            secretConfig.privateKey = values.asterPrivateKey
+          }
+        } else if (!isOnChain) {
           const masked = editingChannel?.secretConfigMask ?? {}
           if (values.apiKey && values.apiKey !== masked.apiKey) {
             secretConfig.apiKey = values.apiKey
@@ -1501,9 +1527,7 @@ function ChannelForm({
           if (isPassphraseProvider && values.passphrase && values.passphrase !== masked.passphrase) {
             secretConfig.passphrase = values.passphrase
           }
-          if (!isAster) {
-            publicConfig.accountType = 'spot'
-          }
+          publicConfig.accountType = 'spot'
         }
 
         onSubmit({
@@ -1543,11 +1567,14 @@ function ChannelForm({
           </Field>
           {isAster ? (
             <>
-              <Field label="API Key" error={errors.apiKey?.message}>
-                <input {...register('apiKey')} />
+              <Field label="User Wallet" error={errors.asterUser?.message}>
+                <input {...register('asterUser')} />
               </Field>
-              <Field label="API Secret" error={errors.apiSecret?.message}>
-                <input type="password" {...register('apiSecret')} />
+              <Field label="Signer Wallet" error={errors.asterSigner?.message}>
+                <input {...register('asterSigner')} />
+              </Field>
+              <Field label="Private Key" error={errors.asterPrivateKey?.message}>
+                <input type="password" {...register('asterPrivateKey')} />
               </Field>
             </>
           ) : null}

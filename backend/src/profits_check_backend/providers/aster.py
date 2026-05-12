@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import time
 import urllib.parse
 from decimal import Decimal
 from typing import Any, cast
-from urllib.parse import urlencode
 
 import httpx
 from eth_account import Account
@@ -36,11 +33,30 @@ class AsterProvider(Provider):
         self.config = config
         self.secrets = secrets
         self.now_factory = now_factory or (lambda: int(time.time() * 1_000_000))
-        self.position_now_factory = now_factory or (lambda: int(time.time() * 1000))
-        self.signature_factory = signature_factory or self._sign
+        self.signature_factory = signature_factory or self._sign_api_wallet_message
 
-    def _sign(self, query: str, secret: str) -> str:
-        return hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+    def _sign_api_wallet_message(self, message_body: str, private_key: str) -> str:
+        typed_data = {
+            "types": {
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "version", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"},
+                ],
+                "Message": [{"name": "msg", "type": "string"}],
+            },
+            "primaryType": "Message",
+            "domain": {
+                "name": "AsterSignTransaction",
+                "version": "1",
+                "chainId": 1666,
+                "verifyingContract": "0x0000000000000000000000000000000000000000",
+            },
+            "message": {"msg": message_body},
+        }
+        signed = Account.sign_message(encode_typed_data(full_message=typed_data), private_key)
+        return signed.signature.hex()
 
     async def collect_snapshot(self) -> ProviderSnapshot:
         rpc_url = str(
@@ -144,22 +160,12 @@ class AsterProvider(Provider):
     async def _collect_signed_positions(
         self, client: httpx.AsyncClient
     ) -> list[dict[str, Any]] | None:
-        api_key = str(self.secrets.get("apiKey", self.secrets.get("api_key", "")))
-        api_secret = str(self.secrets.get("apiSecret", self.secrets.get("api_secret", "")))
-        if not api_key or not api_secret:
-            return None
-
         try:
             fapi_base = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip(
                 "/"
             )
-            timestamp = int(self.position_now_factory())
-            query = urlencode({"timestamp": timestamp})
-            signature = self.signature_factory(query, api_secret)
-            response = await client.get(
-                f"{fapi_base}/fapi/v3/positionRisk?{query}&signature={signature}",
-                headers={"X-MBX-APIKEY": api_key},
-            )
+            params = self._signed_params({})
+            response = await client.get(f"{fapi_base}/fapi/v3/positionRisk", params=params)
             response.raise_for_status()
             payload = response.json()
             return cast(list[dict[str, Any]], payload if isinstance(payload, list) else [])
@@ -211,7 +217,7 @@ class AsterProvider(Provider):
         return str(distance.quantize(Decimal("0.00000001")))
 
     async def collect_contract_positions(self) -> list[ContractPositionRisk]:
-        base_url = str(self.config.get("futuresBaseUrl", "https://fapi3.asterdex.com")).rstrip("/")
+        base_url = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip("/")
         path = "/fapi/v3/positionRisk"
         params = self._signed_params({})
         async with provider_http_client() as client:
@@ -232,27 +238,7 @@ class AsterProvider(Provider):
             raise ProviderError("Aster API wallet credentials are incomplete")
         signed_params = {**params, "user": user, "signer": signer, "nonce": str(self.now_factory())}
         param_text = urllib.parse.urlencode(signed_params)
-        typed_data = {
-            "types": {
-                "EIP712Domain": [
-                    {"name": "name", "type": "string"},
-                    {"name": "version", "type": "string"},
-                    {"name": "chainId", "type": "uint256"},
-                    {"name": "verifyingContract", "type": "address"},
-                ],
-                "Message": [{"name": "msg", "type": "string"}],
-            },
-            "primaryType": "Message",
-            "domain": {
-                "name": "AsterSignTransaction",
-                "version": "1",
-                "chainId": 1666,
-                "verifyingContract": "0x0000000000000000000000000000000000000000",
-            },
-            "message": {"msg": param_text},
-        }
-        signed = Account.sign_message(encode_typed_data(full_message=typed_data), private_key)
-        return {**signed_params, "signature": signed.signature.hex()}
+        return {**signed_params, "signature": self.signature_factory(param_text, private_key)}
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(

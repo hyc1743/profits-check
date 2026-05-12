@@ -538,7 +538,7 @@ async def test_aster_provider_collects_spot_and_futures_balances(httpx_mock) -> 
 
 
 @pytest.mark.asyncio
-async def test_aster_provider_collects_signed_position_risk(httpx_mock) -> None:
+async def test_aster_provider_collects_api_wallet_position_risk(httpx_mock) -> None:
     from profits_check_backend.providers.aster import AsterProvider
 
     httpx_mock.add_response(
@@ -554,7 +554,10 @@ async def test_aster_provider_collects_signed_position_risk(httpx_mock) -> None:
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://fapi.asterdex.com/fapi/v3/positionRisk?timestamp=1700000000000&signature=expected",
+        url=(
+            "https://fapi.asterdex.com/fapi/v3/positionRisk?"
+            "user=0xUser&signer=0xSigner&nonce=1700000000000&signature=expected"
+        ),
         json=[
             {
                 "symbol": "BTCUSDT",
@@ -571,9 +574,9 @@ async def test_aster_provider_collects_signed_position_risk(httpx_mock) -> None:
     provider = AsterProvider(
         channel_name="Aster",
         config={"walletAddress": "0xTest"},
-        secrets={"apiKey": "public", "apiSecret": "secret"},
+        secrets={"user": "0xUser", "signer": "0xSigner", "privateKey": "secret"},
         now_factory=lambda: "1700000000000",
-        signature_factory=lambda query, secret: "expected",
+        signature_factory=lambda message_body, private_key: "expected",
     )
 
     snapshot = await provider.collect_snapshot()
