@@ -16,6 +16,7 @@ from profits_check_backend.security import SecretCipher
 from profits_check_backend.services.channels import decode_public_config, decode_secret_config
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+OKX_DEX_PROVIDER_TYPES = {"bsc", "onchain"}
 
 
 def _get_okx_dex_secrets(session: Session, cipher: SecretCipher) -> dict[str, str]:
@@ -135,12 +136,16 @@ async def execute_snapshot_run(
     failure_count = 0
     run_id: int | None = None
 
-    okx_dex_secrets = _get_okx_dex_secrets(session, cipher)
+    okx_dex_secrets = (
+        _get_okx_dex_secrets(session, cipher)
+        if any(channel.provider in OKX_DEX_PROVIDER_TYPES for channel in channels)
+        else {}
+    )
 
     for channel in channels:
         try:
             secrets = decode_secret_config(channel, cipher)
-            if channel.provider in ("bsc", "onchain"):
+            if channel.provider in OKX_DEX_PROVIDER_TYPES:
                 secrets.update(okx_dex_secrets)
             provider = provider_builder(
                 provider_type=channel.provider,
@@ -211,12 +216,16 @@ async def collect_live_summary(
     channel_summaries: list[dict[str, str | None]] = []
     all_balances: list[NormalizedAssetBalance] = []
     channel_map = {channel.id: channel for channel in channels}
-    okx_dex_secrets = _get_okx_dex_secrets(session, cipher)
+    okx_dex_secrets = (
+        _get_okx_dex_secrets(session, cipher)
+        if any(channel.provider in OKX_DEX_PROVIDER_TYPES for channel in channels)
+        else {}
+    )
 
     for channel in channels:
         try:
             secrets = decode_secret_config(channel, cipher)
-            if channel.provider in ("bsc", "onchain"):
+            if channel.provider in OKX_DEX_PROVIDER_TYPES:
                 secrets.update(okx_dex_secrets)
             provider = provider_builder(
                 provider_type=channel.provider,

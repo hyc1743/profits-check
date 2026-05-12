@@ -322,3 +322,101 @@ def test_live_summary_returns_total_without_creating_snapshot(client) -> None:
     snapshots_response = client.get("/api/snapshots")
     assert snapshots_response.status_code == 200
     assert snapshots_response.json() == []
+
+
+def test_binance_live_summary_ignores_unreadable_okx_dex_config(client) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.models import AppSetting
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    class StubProvider:
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=Decimal("10500"),
+                assets=[
+                    AssetBalance(
+                        asset_symbol="BTC",
+                        quantity=Decimal("0.1"),
+                        value_usd=Decimal("10500"),
+                        metadata={"source": "binance", "type": "spot"},
+                    )
+                ],
+            )
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance Live",
+            "publicConfig": {"accountType": "spot"},
+            "secretConfig": {"apiKey": "key-1", "apiSecret": "secret-1"},
+        },
+    )
+    assert channel_response.status_code == 201
+
+    with client.app.state.session_factory() as session:
+        session.add(
+            AppSetting(
+                key="okxDexConfig",
+                value_json='{"apiKey":"stale","apiSecretEncrypted":"unreadable"}',
+            )
+        )
+        session.commit()
+
+    summary_response = client.get("/api/summary/live")
+
+    assert summary_response.status_code == 200
+    assert summary_response.json()["totalValueUsd"] == "10500.00000000"
+
+
+def test_binance_snapshot_run_ignores_unreadable_okx_dex_config(client) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.models import AppSetting
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    class StubProvider:
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=Decimal("10500"),
+                assets=[
+                    AssetBalance(
+                        asset_symbol="BTC",
+                        quantity=Decimal("0.1"),
+                        value_usd=Decimal("10500"),
+                        metadata={"source": "binance", "type": "spot"},
+                    )
+                ],
+            )
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance Live",
+            "publicConfig": {"accountType": "spot"},
+            "secretConfig": {"apiKey": "key-1", "apiSecret": "secret-1"},
+        },
+    )
+    assert channel_response.status_code == 201
+
+    with client.app.state.session_factory() as session:
+        session.add(
+            AppSetting(
+                key="okxDexConfig",
+                value_json='{"apiKey":"stale","apiSecretEncrypted":"unreadable"}',
+            )
+        )
+        session.commit()
+
+    run_response = client.post("/api/snapshots/run")
+
+    assert run_response.status_code == 200
+    assert run_response.json()["totalValueUsd"] == "10500.00000000"
