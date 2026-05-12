@@ -11,6 +11,7 @@ import httpx
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractPositionRisk,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -73,6 +74,55 @@ class BinanceProvider(Provider):
             assets.extend(loan_assets)
             total_value += futures_total + earn_total + loan_total
             return ProviderSnapshot(total_value_usd=total_value, assets=assets)
+
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        futures_base_url = str(
+            self.config.get(
+                "futures_base_url", self.config.get("futuresBaseUrl", "https://fapi.binance.com")
+            )
+        ).rstrip("/")
+        api_key = str(
+            self.config.get(
+                "api_key",
+                self.config.get(
+                    "apiKey", self.secrets.get("api_key", self.secrets.get("apiKey", ""))
+                ),
+            )
+        )
+        api_secret = str(self.secrets.get("api_secret", self.secrets.get("apiSecret", "")))
+        if not api_key or not api_secret:
+            raise ProviderError("Binance API credentials are incomplete")
+
+        timestamp = int(self.now_factory())
+        query = urlencode({"timestamp": timestamp})
+        signature = self.signature_factory(query, api_secret)
+        url = f"{futures_base_url}/fapi/v3/positionRisk?{query}&signature={signature}"
+        async with provider_http_client() as client:
+            response = await client.get(url, headers={"X-MBX-APIKEY": api_key})
+            response.raise_for_status()
+            payload = response.json()
+        return [
+            self._position_from_payload(item)
+            for item in payload
+            if Decimal(str(item.get("positionAmt", "0"))) != 0
+        ]
+
+    def _position_from_payload(self, item: dict[str, Any]) -> ContractPositionRisk:
+        return ContractPositionRisk(
+            provider="binance",
+            channel_name=self.channel_name,
+            symbol=str(item.get("symbol", "")),
+            side=str(item.get("positionSide", "BOTH")),
+            quantity=Decimal(str(item.get("positionAmt", "0"))),
+            entry_price=_optional_decimal(item.get("entryPrice")),
+            mark_price=Decimal(str(item.get("markPrice", "0"))),
+            liquidation_price=_optional_decimal(item.get("liquidationPrice")),
+            unrealized_pnl=_optional_decimal(item.get("unRealizedProfit")),
+            margin_mode=str(item.get("marginType", "")) or None,
+            leverage=str(item.get("leverage", "")) or None,
+            updated_at_ms=_optional_int(item.get("updateTime")),
+            raw_payload=item,
+        )
 
     async def _collect_spot(
         self, client: httpx.AsyncClient, base_url: str, api_key: str, api_secret: str
@@ -300,3 +350,16 @@ class BinanceProvider(Provider):
                 )
             )
         return balances
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    return None if parsed == 0 else parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(str(value))

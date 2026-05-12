@@ -190,6 +190,7 @@
 }
 
 .asset-trend-block,
+.liquidation-block,
 .distribution-block {
   margin: 1.25rem 0 1.5rem;
 }
@@ -234,6 +235,69 @@
 .account-list {
   display: grid;
   gap: 0.4rem;
+}
+
+.liquidation-block {
+  display: grid;
+  gap: 0.8rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-faint);
+}
+
+.risk-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.risk-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.35fr) repeat(3, minmax(6.5rem, 0.75fr)) auto;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.risk-row strong,
+.risk-row span {
+  overflow-wrap: anywhere;
+}
+
+.risk-main,
+.risk-metric {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.risk-main span,
+.risk-metric span {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.risk-metric strong {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92rem;
+}
+
+.risk-alert {
+  justify-self: end;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--accent-strong);
+  background: color-mix(in oklch, var(--paper) 88%, var(--accent) 8%);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.risk-status-warning {
+  border-color: color-mix(in oklch, var(--danger) 30%, var(--border-subtle));
+}
+
+.risk-status-warning .risk-metric:first-of-type strong {
+  color: var(--danger-strong);
 }
 
 .channel-share-list {
@@ -507,7 +571,8 @@
 
 .channel-list,
 .editor-form,
-.schedule-form {
+.schedule-form,
+.liquidation-form {
   display: grid;
   gap: 0.8rem;
 }
@@ -517,8 +582,16 @@
 }
 
 .editor-form,
-.schedule-form {
+.schedule-form,
+.liquidation-form {
   align-content: start;
+}
+
+.toggle-row,
+.form-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .field {
@@ -700,6 +773,15 @@ details[open] summary::before {
   .account-row {
     grid-template-columns: 1fr;
     gap: 0.35rem;
+  }
+
+  .risk-row {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .risk-alert {
+    justify-self: start;
   }
 
   .channel-share-row {

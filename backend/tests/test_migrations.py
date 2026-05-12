@@ -19,9 +19,13 @@ def test_alembic_upgrade_creates_expected_tables(tmp_path) -> None:
     command.upgrade(config, "head")
 
     inspector = inspect(create_engine(f"sqlite+pysqlite:///{database_path}"))
-    assert {"auth_sessions", "channels", "snapshot_assets", "snapshots"} <= set(
-        inspector.get_table_names()
-    )
+    assert {
+        "auth_sessions",
+        "channels",
+        "snapshot_assets",
+        "snapshots",
+        "liquidation_positions",
+    } <= set(inspector.get_table_names())
 
 
 def test_alembic_upgrade_adopts_existing_pre_alembic_database(tmp_path) -> None:
@@ -101,4 +105,4 @@ def test_alembic_upgrade_adopts_existing_pre_alembic_database(tmp_path) -> None:
     assert "auth_sessions" in inspector.get_table_names()
     with engine.connect() as connection:
         assert connection.scalar(text("select count(*) from channels")) == 1
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260512_0002"
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260512_0003"

@@ -78,6 +78,54 @@ export interface SchedulerResponse {
   jobs: Array<{ id: string; trigger?: string }>
 }
 
+export interface LiquidationMonitorConfig {
+  monitorEnabled: boolean
+  alertEnabled: boolean
+  thresholdPercent: string
+  checkIntervalSeconds: number
+  miaoCodeConfigured: boolean
+  supportedFrequencies: number[]
+}
+
+export interface LiquidationPositionResponse {
+  id: number
+  channelId: number
+  provider: string
+  channelName: string
+  symbol: string
+  side: string
+  quantity: string
+  entryPrice?: string | null
+  markPrice: string
+  liquidationPrice?: string | null
+  distancePercent?: string | null
+  thresholdPercent: string
+  status: string
+  unrealizedPnl?: string | null
+  marginMode?: string | null
+  leverage?: string | null
+  lastAlertStatus?: string | null
+  lastAlertError?: string | null
+  lastAlertAt?: string | null
+  updatedAt: string
+}
+
+export interface LiquidationMonitorResponse {
+  config: LiquidationMonitorConfig
+  positions: LiquidationPositionResponse[]
+  status?: string
+  alertCount?: number
+  failureCount?: number
+}
+
+export interface UpdateLiquidationMonitorPayload {
+  monitorEnabled: boolean
+  alertEnabled: boolean
+  thresholdPercent: string
+  checkIntervalSeconds: number
+  miaoCode?: string
+}
+
 export interface ResetSystemResponse {
   status: string
   deletedChannels: number
@@ -170,6 +218,21 @@ export const api = {
     requestJson<SchedulerResponse>('/api/system/scheduler', {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
+    }),
+  getLiquidationMonitor: () =>
+    requestJson<LiquidationMonitorResponse>('/api/liquidation-monitor'),
+  refreshLiquidationMonitor: () =>
+    requestJson<LiquidationMonitorResponse>('/api/liquidation-monitor/refresh', {
+      method: 'POST',
+    }),
+  updateLiquidationMonitor: (payload: UpdateLiquidationMonitorPayload) =>
+    requestJson<LiquidationMonitorResponse>('/api/liquidation-monitor', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  testLiquidationAlert: () =>
+    requestJson<{ status: string; error?: string }>('/api/liquidation-monitor/test-alert', {
+      method: 'POST',
     }),
   resetSystem: () =>
     requestJson<ResetSystemResponse>('/api/system/reset', {

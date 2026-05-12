@@ -355,6 +355,136 @@ async def test_bybit_provider_collects_unified_balances(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_binance_provider_collects_contract_position_risk(httpx_mock) -> None:
+    from profits_check_backend.providers.binance import BinanceProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://fapi.binance.com/fapi/v3/positionRisk?timestamp=1700000000000&signature=expected",
+        json=[
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.5",
+                "entryPrice": "60000",
+                "markPrice": "58100",
+                "liquidationPrice": "58000",
+                "unRealizedProfit": "-950",
+                "marginType": "isolated",
+                "leverage": "20",
+                "updateTime": 1700000000001,
+            },
+            {
+                "symbol": "ETHUSDT",
+                "positionSide": "BOTH",
+                "positionAmt": "0",
+                "markPrice": "3000",
+                "liquidationPrice": "0",
+            },
+        ],
+    )
+    provider = BinanceProvider(
+        channel_name="Binance",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: 1700000000000,
+        signature_factory=lambda query, secret: "expected",
+    )
+
+    positions = await provider.collect_contract_positions()
+
+    assert len(positions) == 1
+    assert positions[0].symbol == "BTCUSDT"
+    assert positions[0].side == "LONG"
+    assert positions[0].quantity == Decimal("0.5")
+    assert positions[0].mark_price == Decimal("58100")
+    assert positions[0].liquidation_price == Decimal("58000")
+    assert positions[0].distance_percent == Decimal("0.17211704")
+
+
+@pytest.mark.asyncio
+async def test_okx_provider_collects_contract_position_risk(httpx_mock) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/positions?instType=SWAP",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "instId": "BTC-USDT-SWAP",
+                    "posSide": "long",
+                    "pos": "2",
+                    "avgPx": "60000",
+                    "markPx": "58100",
+                    "liqPx": "58000",
+                    "upl": "-200",
+                    "mgnMode": "cross",
+                    "lever": "10",
+                    "uTime": "1700000000001",
+                }
+            ],
+        },
+    )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    positions = await provider.collect_contract_positions()
+
+    assert len(positions) == 1
+    assert positions[0].symbol == "BTC-USDT-SWAP"
+    assert positions[0].side == "long"
+    assert positions[0].quantity == Decimal("2")
+    assert positions[0].distance_percent == Decimal("0.17211704")
+
+
+@pytest.mark.asyncio
+async def test_bybit_provider_collects_contract_position_risk(httpx_mock) -> None:
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/position/list?category=linear",
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "side": "Buy",
+                        "size": "0.5",
+                        "avgPrice": "60000",
+                        "markPrice": "58100",
+                        "liqPrice": "58000",
+                        "unrealisedPnl": "-950",
+                        "positionIdx": 1,
+                        "leverage": "20",
+                        "updatedTime": "1700000000001",
+                    }
+                ]
+            },
+        },
+    )
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000000",
+    )
+
+    positions = await provider.collect_contract_positions()
+
+    assert len(positions) == 1
+    assert positions[0].side == "Buy"
+    assert positions[0].distance_percent == Decimal("0.17211704")
+
+
+@pytest.mark.asyncio
 async def test_aster_provider_collects_spot_and_futures_balances(httpx_mock) -> None:
     from profits_check_backend.providers.aster import AsterProvider
 

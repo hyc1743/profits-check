@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import time
+import urllib.parse
 from decimal import Decimal
 from typing import cast
 
 import httpx
+from eth_account import Account
+from eth_account.messages import encode_typed_data
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractPositionRisk,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -25,6 +30,7 @@ class AsterProvider(Provider):
         self.channel_name = channel_name
         self.config = config
         self.secrets = secrets
+        self.now_factory = now_factory or (lambda: int(time.time() * 1_000_000))
 
     async def collect_snapshot(self) -> ProviderSnapshot:
         rpc_url = str(
@@ -113,6 +119,67 @@ class AsterProvider(Provider):
             raise ProviderError("Aster returned no balances")
         return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        base_url = str(self.config.get("futuresBaseUrl", "https://fapi3.asterdex.com")).rstrip("/")
+        path = "/fapi/v3/positionRisk"
+        params = self._signed_params({})
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", params=params)
+            response.raise_for_status()
+            payload = response.json()
+        return [
+            self._position_from_payload(item)
+            for item in payload
+            if Decimal(str(item.get("positionAmt", "0"))) != 0
+        ]
+
+    def _signed_params(self, params: dict[str, str]) -> dict[str, str]:
+        user = str(self.secrets.get("user", self.secrets.get("asterUser", "")))
+        signer = str(self.secrets.get("signer", self.secrets.get("asterSigner", "")))
+        private_key = str(self.secrets.get("privateKey", self.secrets.get("asterPrivateKey", "")))
+        if not user or not signer or not private_key:
+            raise ProviderError("Aster API wallet credentials are incomplete")
+        signed_params = {**params, "user": user, "signer": signer, "nonce": str(self.now_factory())}
+        param_text = urllib.parse.urlencode(signed_params)
+        typed_data = {
+            "types": {
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "version", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"},
+                ],
+                "Message": [{"name": "msg", "type": "string"}],
+            },
+            "primaryType": "Message",
+            "domain": {
+                "name": "AsterSignTransaction",
+                "version": "1",
+                "chainId": 1666,
+                "verifyingContract": "0x0000000000000000000000000000000000000000",
+            },
+            "message": {"msg": param_text},
+        }
+        signed = Account.sign_message(encode_typed_data(full_message=typed_data), private_key)
+        return {**signed_params, "signature": signed.signature.hex()}
+
+    def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
+        return ContractPositionRisk(
+            provider="aster",
+            channel_name=self.channel_name,
+            symbol=str(item.get("symbol", "")),
+            side=str(item.get("positionSide", "BOTH")),
+            quantity=Decimal(str(item.get("positionAmt", "0"))),
+            entry_price=_optional_decimal(item.get("entryPrice")),
+            mark_price=Decimal(str(item.get("markPrice", "0"))),
+            liquidation_price=_optional_decimal(item.get("liquidationPrice")),
+            unrealized_pnl=_optional_decimal(item.get("unRealizedProfit")),
+            margin_mode=str(item.get("marginType", "")) or None,
+            leverage=str(item.get("leverage", "")) or None,
+            updated_at_ms=_optional_int(item.get("updateTime")),
+            raw_payload=dict(item),
+        )
+
     async def _estimate_spot_price(
         self, client: httpx.AsyncClient, asset: str, quantity: Decimal
     ) -> Decimal | None:
@@ -133,3 +200,16 @@ class AsterProvider(Provider):
             return quantity * Decimal(str(price))
         except Exception:
             return None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    return None if parsed == 0 else parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(str(value))
