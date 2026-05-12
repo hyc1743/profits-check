@@ -10,6 +10,7 @@ import httpx
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractPositionRisk,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -64,6 +65,43 @@ class BitgetProvider(Provider):
             assets.extend(futures_assets)
             total_value += futures_total
             return ProviderSnapshot(total_value_usd=total_value, assets=assets)
+
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bitget.com"))
+        ).rstrip("/")
+        path = "/api/v2/mix/position/all-position"
+        product_type = str(self.config.get("productType", "USDT-FUTURES"))
+        query = f"productType={product_type}"
+        headers = self._signature_headers("GET", path, query=query)
+        async with provider_http_client() as client:
+            response = await client.get(
+                f"{base_url}{path}", headers=headers, params={"productType": product_type}
+            )
+            response.raise_for_status()
+            payload = response.json()
+        return [
+            self._position_from_payload(item)
+            for item in payload.get("data", [])
+            if Decimal(str(item.get("total", item.get("size", "0")))) != 0
+        ]
+
+    def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
+        return ContractPositionRisk(
+            provider="bitget",
+            channel_name=self.channel_name,
+            symbol=str(item.get("symbol", "")),
+            side=str(item.get("holdSide", "")),
+            quantity=Decimal(str(item.get("total", item.get("size", "0")))),
+            entry_price=_optional_decimal(item.get("openPriceAvg")),
+            mark_price=Decimal(str(item.get("markPrice", "0"))),
+            liquidation_price=_optional_decimal(item.get("liquidationPrice")),
+            unrealized_pnl=_optional_decimal(item.get("unrealizedPL")),
+            margin_mode=str(item.get("marginMode", "")) or None,
+            leverage=str(item.get("leverage", "")) or None,
+            updated_at_ms=_optional_int(item.get("uTime")),
+            raw_payload=dict(item),
+        )
 
     async def _collect_spot(
         self, client: httpx.AsyncClient, base_url: str
@@ -163,3 +201,16 @@ class BitgetProvider(Provider):
             return quantity * Decimal(str(data[0]["lastPr"]))
         except Exception:
             return None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    return None if parsed == 0 else parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(str(value))

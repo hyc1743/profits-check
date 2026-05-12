@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractPositionRisk,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -89,3 +90,54 @@ class BybitProvider(Provider):
                 )
             )
         return ProviderSnapshot(total_value_usd=total_value, assets=assets)
+
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))
+        ).rstrip("/")
+        params = {"category": "linear"}
+        query_string = urlencode(params)
+        headers = self._signature_headers(query_string)
+        async with provider_http_client() as client:
+            response = await client.get(
+                f"{base_url}/v5/position/list", headers=headers, params=params
+            )
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("retCode") not in {0, "0"}:
+            raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
+        return [
+            self._position_from_payload(item)
+            for item in payload.get("result", {}).get("list", [])
+            if Decimal(str(item.get("size", "0"))) != 0
+        ]
+
+    def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
+        return ContractPositionRisk(
+            provider="bybit",
+            channel_name=self.channel_name,
+            symbol=str(item.get("symbol", "")),
+            side=str(item.get("side", "")),
+            quantity=Decimal(str(item.get("size", "0"))),
+            entry_price=_optional_decimal(item.get("avgPrice")),
+            mark_price=Decimal(str(item.get("markPrice", "0"))),
+            liquidation_price=_optional_decimal(item.get("liqPrice")),
+            unrealized_pnl=_optional_decimal(item.get("unrealisedPnl")),
+            margin_mode=str(item.get("tradeMode", "")) or None,
+            leverage=str(item.get("leverage", "")) or None,
+            updated_at_ms=_optional_int(item.get("updatedTime")),
+            raw_payload=dict(item),
+        )
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    return None if parsed == 0 else parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(str(value))

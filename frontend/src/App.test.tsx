@@ -85,6 +85,41 @@ const schedulerPayload = {
   jobs: [{ id: 'scheduled-snapshot' }],
 }
 
+const liquidationMonitorPayload = {
+  config: {
+    monitorEnabled: false,
+    alertEnabled: false,
+    thresholdPercent: '5.00000000',
+    checkIntervalSeconds: 60,
+    miaoCodeConfigured: false,
+    supportedFrequencies: [30, 60, 180, 300, 900, 1800, 3600],
+  },
+  positions: [
+    {
+      id: 1,
+      channelId: 1,
+      provider: 'binance',
+      channelName: '主账户',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      quantity: '0.50000000',
+      entryPrice: '60000.00000000',
+      markPrice: '58100.00000000',
+      liquidationPrice: '58000.00000000',
+      distancePercent: '0.17211704',
+      thresholdPercent: '5.00000000',
+      status: 'warning',
+      unrealizedPnl: '-950.00000000',
+      marginMode: 'isolated',
+      leverage: '20',
+      lastAlertStatus: 'sent',
+      lastAlertError: null,
+      lastAlertAt: '2026-05-12T07:00:00+00:00',
+      updatedAt: '2026-05-12T07:00:00+00:00',
+    },
+  ],
+}
+
 function installHandlers() {
   server.use(
     http.get('/api/auth/session', () => HttpResponse.json({ authenticated: true })),
@@ -97,6 +132,9 @@ function installHandlers() {
     http.get('/api/snapshots/series', () => HttpResponse.json(snapshotsPayload)),
     http.get('/api/schedule', () => HttpResponse.json(schedulePayload)),
     http.get('/api/system/scheduler', () => HttpResponse.json(schedulerPayload)),
+    http.get('/api/liquidation-monitor', () => HttpResponse.json(liquidationMonitorPayload)),
+    http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(liquidationMonitorPayload)),
+    http.post('/api/liquidation-monitor/test-alert', () => HttpResponse.json({ status: 'sent' })),
     http.post('/api/snapshots/run', () =>
       HttpResponse.json({
         id: 5,
@@ -112,6 +150,17 @@ function installHandlers() {
     }),
     http.post('/api/channels/1/test', () => HttpResponse.json({ status: 'ok' })),
     http.put('/api/schedule', async ({ request }) => HttpResponse.json(await request.json())),
+    http.put('/api/liquidation-monitor', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      return HttpResponse.json({
+        ...liquidationMonitorPayload,
+        config: {
+          ...liquidationMonitorPayload.config,
+          ...body,
+          miaoCodeConfigured: Boolean(body.miaoCode),
+        },
+      })
+    }),
     http.put('/api/system/scheduler', async ({ request }) =>
       HttpResponse.json({ ...schedulerPayload, ...((await request.json()) as Record<string, unknown>) }),
     ),
@@ -200,6 +249,81 @@ test('live refresh shows account categories', async () => {
   expect(screen.getByText('主账户 · 现货')).toBeInTheDocument()
   expect(screen.getByText('主账户 · 合约')).toBeInTheDocument()
   expect(screen.getByText('主账户 · 理财')).toBeInTheDocument()
+})
+
+test('shows liquidation risk positions and can refresh them', async () => {
+  installHandlers()
+  let refreshCount = 0
+  server.use(
+    http.post('/api/liquidation-monitor/refresh', () => {
+      refreshCount += 1
+      return HttpResponse.json(liquidationMonitorPayload)
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
+  expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
+  expect(screen.getByText('0.1721%')).toBeInTheDocument()
+  expect(screen.getByText('58100.00 USD')).toBeInTheDocument()
+  expect(screen.getByText('58000.00 USD')).toBeInTheDocument()
+  expect(screen.getByText('已提醒')).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
+  await waitFor(() => expect(refreshCount).toBe(1))
+})
+
+test('saves liquidation monitor switches frequency threshold and test alert', async () => {
+  installHandlers()
+  const monitorUpdates: Array<Record<string, unknown>> = []
+  let testAlertCalled = false
+  server.use(
+    http.put('/api/liquidation-monitor', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      monitorUpdates.push(body)
+      return HttpResponse.json({
+        ...liquidationMonitorPayload,
+        config: {
+          ...liquidationMonitorPayload.config,
+          ...body,
+          miaoCodeConfigured: Boolean(body.miaoCode),
+        },
+      })
+    }),
+    http.post('/api/liquidation-monitor/test-alert', () => {
+      testAlertCalled = true
+      return HttpResponse.json({ status: 'sent' })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  await user.click(screen.getByLabelText('开启监控'))
+  await user.click(screen.getByLabelText('开启电话提醒'))
+  await user.clear(screen.getByLabelText('提醒阈值'))
+  await user.type(screen.getByLabelText('提醒阈值'), '1.5')
+  await user.selectOptions(screen.getByLabelText('监控频率'), '300')
+  await user.type(screen.getByLabelText('喵码'), 'miao-123')
+  await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
+
+  await waitFor(() =>
+    expect(monitorUpdates).toEqual([
+      {
+        monitorEnabled: true,
+        alertEnabled: true,
+        thresholdPercent: '1.5',
+        checkIntervalSeconds: 300,
+        miaoCode: 'miao-123',
+      },
+    ]),
+  )
+
+  await user.click(screen.getByRole('button', { name: '测试电话提醒' }))
+  await waitFor(() => expect(testAlertCalled).toBe(true))
 })
 
 test('switches channel form fields for onchain and runs manual snapshot', async () => {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 
 class ProviderError(RuntimeError):
@@ -22,6 +22,33 @@ class ProviderSnapshot:
     assets: list[AssetBalance]
 
 
+@dataclass(slots=True, eq=True)
+class ContractPositionRisk:
+    provider: str
+    channel_name: str
+    symbol: str
+    side: str
+    quantity: Decimal
+    entry_price: Decimal | None
+    mark_price: Decimal
+    liquidation_price: Decimal | None
+    unrealized_pnl: Decimal | None
+    margin_mode: str | None
+    leverage: str | None
+    updated_at_ms: int | None
+    raw_payload: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def distance_percent(self) -> Decimal | None:
+        if self.mark_price == 0 or self.liquidation_price is None or self.liquidation_price == 0:
+            return None
+        value = abs(self.mark_price - self.liquidation_price) / self.mark_price * Decimal("100")
+        return value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+
+
 class Provider:
     async def collect_snapshot(self) -> ProviderSnapshot:
         raise NotImplementedError
+
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        return []

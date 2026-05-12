@@ -9,6 +9,7 @@ import httpx
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractPositionRisk,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -80,6 +81,44 @@ class GateProvider(Provider):
             all_assets = spot_assets + futures_assets
             total_value = spot_total + futures_total
             return ProviderSnapshot(total_value_usd=total_value, assets=all_assets)
+
+    async def collect_contract_positions(self) -> list[ContractPositionRisk]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.gateio.ws/api/v4"))
+        ).rstrip("/")
+        settle = str(self.config.get("settle", "usdt")).lower()
+        path = f"/futures/{settle}/positions"
+        headers = self._signature_headers("GET", "/api/v4" + path)
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        return [
+            self._position_from_payload(item)
+            for item in payload
+            if Decimal(str(item.get("size", "0"))) != 0
+        ]
+
+    def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
+        size = Decimal(str(item.get("size", "0")))
+        side = "long" if size > 0 else "short"
+        return ContractPositionRisk(
+            provider="gate",
+            channel_name=self.channel_name,
+            symbol=str(item.get("contract", "")),
+            side=side,
+            quantity=size,
+            entry_price=_optional_decimal(item.get("entry_price")),
+            mark_price=Decimal(str(item.get("mark_price", item.get("markPrice", "0")))),
+            liquidation_price=_optional_decimal(
+                item.get("liq_price", item.get("liquidation_price"))
+            ),
+            unrealized_pnl=_optional_decimal(item.get("unrealised_pnl")),
+            margin_mode=str(item.get("mode", "")) or None,
+            leverage=str(item.get("leverage", "")) or None,
+            updated_at_ms=_optional_int(item.get("update_time_ms")),
+            raw_payload=dict(item),
+        )
 
     async def _fetch_wallet_total(self, client: httpx.AsyncClient, base_url: str) -> dict | None:
         try:
@@ -173,3 +212,16 @@ class GateProvider(Provider):
             return quantity * Decimal(str(data[0]["last"]))
         except Exception:
             return None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    return None if parsed == 0 else parsed
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(str(value))

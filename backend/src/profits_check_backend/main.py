@@ -6,11 +6,13 @@ import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from http import HTTPStatus
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
@@ -39,6 +41,13 @@ from profits_check_backend.services.channels import (
     decode_secret_config,
     get_or_create_setting,
     list_channels,
+)
+from profits_check_backend.services.liquidation_monitor import (
+    get_liquidation_monitor_payload,
+    load_liquidation_monitor_config,
+    run_liquidation_monitor,
+    save_liquidation_monitor_config,
+    send_test_liquidation_alert,
 )
 from profits_check_backend.services.snapshots import (
     _get_okx_dex_secrets,
@@ -170,6 +179,16 @@ class ChannelUpdatePayload(BaseModel):
         return self.secret_config if self.secrets is None else self.secrets
 
 
+class LiquidationMonitorPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    monitor_enabled: bool = Field(alias="monitorEnabled")
+    alert_enabled: bool = Field(alias="alertEnabled")
+    threshold_percent: Decimal = Field(alias="thresholdPercent", gt=0)
+    check_interval_seconds: int = Field(alias="checkIntervalSeconds")
+    miao_code: str | None = Field(default=None, alias="miaoCode", max_length=256)
+
+
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
     session_factory = build_session_factory(app_settings)
@@ -180,6 +199,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     snapshot_lock = threading.Lock()
     live_summary_lock = threading.Lock()
     channel_test_lock = threading.Lock()
+    liquidation_monitor_lock = threading.Lock()
 
     def get_schedule_times(session: Session) -> str:
         return json.loads(
@@ -237,6 +257,30 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             finally:
                 snapshot_lock.release()
 
+    def run_scheduled_liquidation_monitor() -> None:
+        if not liquidation_monitor_lock.acquire(blocking=False):
+            return
+        with session_factory() as session:
+            try:
+                config = load_liquidation_monitor_config(session, cipher)
+                if not config.monitor_enabled:
+                    return
+                channels = list(
+                    session.scalars(
+                        select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
+                    )
+                )
+                asyncio.run(
+                    run_liquidation_monitor(
+                        session=session,
+                        channels=channels,
+                        cipher=cipher,
+                        provider_builder=app.state.provider_builder,
+                    )
+                )
+            finally:
+                liquidation_monitor_lock.release()
+
     def scheduled_jobs_payload() -> list[dict[str, str]]:
         return [{"id": job.id, "trigger": str(job.trigger)} for job in scheduler.get_jobs()]
 
@@ -250,6 +294,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     def configure_scheduler(enabled: bool, schedule_times: str) -> None:
         for job in scheduler.get_jobs():
+            if not job.id.startswith("scheduled-snapshot"):
+                continue
             scheduler.remove_job(job.id)
         if not enabled:
             return
@@ -267,6 +313,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 max_instances=1,
             )
 
+    def configure_liquidation_monitor_scheduler(config) -> None:
+        for job in scheduler.get_jobs():
+            if job.id == "liquidation-monitor":
+                scheduler.remove_job(job.id)
+        if not config.monitor_enabled:
+            return
+        scheduler.add_job(
+            run_scheduled_liquidation_monitor,
+            IntervalTrigger(seconds=config.check_interval_seconds, timezone=scheduler_timezone),
+            id="liquidation-monitor",
+            replace_existing=True,
+            max_instances=1,
+        )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = app_settings
@@ -277,9 +337,13 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         app.state.snapshot_lock = snapshot_lock
         app.state.live_summary_lock = live_summary_lock
         app.state.channel_test_lock = channel_test_lock
+        app.state.liquidation_monitor_lock = liquidation_monitor_lock
         with session_factory() as session:
             ensure_admin_password(session, app_settings)
             configure_scheduler(get_scheduler_enabled(session), get_schedule_times(session))
+            configure_liquidation_monitor_scheduler(
+                load_liquidation_monitor_config(session, cipher)
+            )
         scheduler.start()
         yield
         scheduler.shutdown(wait=False)
@@ -473,6 +537,65 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             "assetCount": len(snapshot.assets),
             "totalValueUsd": quantize_decimal(snapshot.total_value_usd),
         }
+
+    @app.get("/api/liquidation-monitor")
+    def get_liquidation_monitor(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        return get_liquidation_monitor_payload(session, cipher)
+
+    @app.put("/api/liquidation-monitor")
+    def put_liquidation_monitor(
+        payload: LiquidationMonitorPayload,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        try:
+            config = save_liquidation_monitor_config(
+                session,
+                cipher,
+                monitor_enabled=payload.monitor_enabled,
+                alert_enabled=payload.alert_enabled,
+                threshold_percent=payload.threshold_percent,
+                check_interval_seconds=payload.check_interval_seconds,
+                miao_code=payload.miao_code,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        configure_liquidation_monitor_scheduler(config)
+        return get_liquidation_monitor_payload(session, cipher)
+
+    @app.post("/api/liquidation-monitor/refresh")
+    def refresh_liquidation_monitor(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        if not app.state.liquidation_monitor_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Liquidation monitor is already running")
+        try:
+            channels = list(
+                session.scalars(
+                    select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
+                )
+            )
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
+            )
+        finally:
+            app.state.liquidation_monitor_lock.release()
+
+    @app.post("/api/liquidation-monitor/test-alert")
+    def test_liquidation_monitor_alert(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        try:
+            return asyncio.run(send_test_liquidation_alert(session, cipher))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.delete("/api/channels/{channel_id}", status_code=204)
     def delete_channel(

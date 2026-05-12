@@ -81,6 +81,38 @@ class AppSetting(Base):
     value_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class LiquidationPosition(Base):
+    __tablename__ = "liquidation_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    channel_name: Mapped[str] = mapped_column(String(120))
+    symbol: Mapped[str] = mapped_column(String(80))
+    side: Mapped[str] = mapped_column(String(32))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    entry_price: Mapped[Decimal | None] = mapped_column(Numeric(32, 12), nullable=True)
+    mark_price: Mapped[Decimal] = mapped_column(Numeric(32, 12), default=Decimal("0"))
+    liquidation_price: Mapped[Decimal | None] = mapped_column(Numeric(32, 12), nullable=True)
+    distance_percent: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    threshold_percent: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("5"))
+    status: Mapped[str] = mapped_column(String(32), default="ok")
+    unrealized_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    margin_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    leverage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_alert_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_alert_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_alert_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_updated_at_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
 class AuthSession(Base):
     __tablename__ = "auth_sessions"
 

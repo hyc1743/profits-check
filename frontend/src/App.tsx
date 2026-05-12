@@ -7,7 +7,15 @@ import type { EChartsOption } from 'echarts'
 
 import './App.css'
 import { ChartSurface } from './components/chart-surface'
-import { api, type ChannelResponse, type CreateChannelPayload, type ScheduleResponse, type SnapshotItem } from './lib/api'
+import {
+  api,
+  type ChannelResponse,
+  type CreateChannelPayload,
+  type LiquidationMonitorResponse,
+  type SnapshotItem,
+  type ScheduleResponse,
+  type UpdateLiquidationMonitorPayload,
+} from './lib/api'
 import { formatUsd, humanizeAccountScope, humanizeProvider, humanizeStatus } from './lib/format'
 
 const channelProviders = ['binance', 'gate', 'okx', 'bitget', 'bybit', 'aster', 'onchain', 'bsc'] as const
@@ -44,6 +52,17 @@ const scheduleSchema = z.object({
 
 type ScheduleFormInput = z.input<typeof scheduleSchema>
 type ScheduleFormValues = z.output<typeof scheduleSchema>
+
+const liquidationMonitorSchema = z.object({
+  monitorEnabled: z.boolean(),
+  alertEnabled: z.boolean(),
+  thresholdPercent: z.string().min(1, '请输入提醒阈值。'),
+  checkIntervalSeconds: z.coerce.number(),
+  miaoCode: z.string().optional(),
+})
+
+type LiquidationMonitorFormInput = z.input<typeof liquidationMonitorSchema>
+type LiquidationMonitorFormValues = z.output<typeof liquidationMonitorSchema>
 
 const calendarWeekdays = ['日', '一', '二', '三', '四', '五', '六']
 const fallbackChartPalette = {
@@ -94,6 +113,36 @@ function formatTrendAxisLabel(value: number) {
 function formatSnapshotTime(value: string) {
   const d = new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000)
   return d.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+function formatPercent(value: string | number | null | undefined, digits = 4) {
+  if (value === null || value === undefined) {
+    return '不可用'
+  }
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (Number.isNaN(numeric)) {
+    return '不可用'
+  }
+  return `${numeric.toFixed(digits)}%`
+}
+
+function humanizeRiskStatus(value: string | null | undefined) {
+  if (value === 'warning') return '接近爆仓'
+  if (value === 'unavailable') return '清算价不可用'
+  if (value === 'ok') return '正常'
+  return value || '未检测'
+}
+
+function humanizeAlertStatus(value: string | null | undefined) {
+  if (value === 'sent') return '已提醒'
+  if (value === 'warning') return '提醒未确认电话'
+  if (value === 'failed') return '提醒失败'
+  return '未提醒'
+}
+
+function formatFrequency(seconds: number) {
+  if (seconds < 60) return `${seconds} 秒`
+  return `${Math.round(seconds / 60)} 分钟`
 }
 
 function getEntryMonths(entries: Array<{ dateKey: string }>) {
@@ -313,6 +362,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const snapshotsQuery = useQuery({ queryKey: ['snapshots'], queryFn: api.getSnapshots })
   const scheduleQuery = useQuery({ queryKey: ['schedule'], queryFn: api.getSchedule })
   const schedulerQuery = useQuery({ queryKey: ['scheduler'], queryFn: api.getScheduler })
+  const liquidationMonitorQuery = useQuery({
+    queryKey: ['liquidation-monitor'],
+    queryFn: api.getLiquidationMonitor,
+  })
 
   const runSnapshotMutation = useMutation({
     mutationFn: api.runSnapshot,
@@ -350,6 +403,32 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     onSuccess: async () => {
       setNotice('调度配置已更新。')
       await queryClient.invalidateQueries({ queryKey: ['schedule'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const refreshLiquidationMonitorMutation = useMutation({
+    mutationFn: api.refreshLiquidationMonitor,
+    onSuccess: (result) => {
+      queryClient.setQueryData(['liquidation-monitor'], result)
+      setNotice(`爆仓风险已刷新，触发提醒 ${result.alertCount ?? 0} 条。`)
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const liquidationMonitorMutation = useMutation({
+    mutationFn: api.updateLiquidationMonitor,
+    onSuccess: async () => {
+      setNotice('爆仓监控配置已更新。')
+      await queryClient.invalidateQueries({ queryKey: ['liquidation-monitor'] })
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
+  const testLiquidationAlertMutation = useMutation({
+    mutationFn: api.testLiquidationAlert,
+    onSuccess: (result) => {
+      setNotice(result.status === 'sent' ? '测试电话提醒已发送。' : '测试提醒已提交。')
     },
     onError: (error) => setNotice(error.message),
   })
@@ -840,6 +919,14 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             ) : null}
           </div>
 
+          {liquidationMonitorQuery.data ? (
+            <LiquidationRiskPanel
+              monitor={liquidationMonitorQuery.data}
+              isRefreshing={refreshLiquidationMonitorMutation.isPending}
+              onRefresh={() => refreshLiquidationMonitorMutation.mutate()}
+            />
+          ) : null}
+
           <div className="distribution-block">
             <div className="asset-totals-head">
               <h3>资产分布</h3>
@@ -921,9 +1008,14 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           onTestChannel={(id) => testChannelMutation.mutate(id)}
           onDeleteChannel={(id) => deleteChannelMutation.mutate(id)}
           onSaveSchedule={(payload) => scheduleMutation.mutate(payload)}
+          liquidationMonitor={liquidationMonitorQuery.data}
+          onSaveLiquidationMonitor={(payload) => liquidationMonitorMutation.mutate(payload)}
+          onTestLiquidationAlert={() => testLiquidationAlertMutation.mutate()}
           onResetSystem={() => resetSystemMutation.mutate()}
           isSavingChannel={createChannelMutation.isPending || updateChannelMutation.isPending}
           isSavingSchedule={scheduleMutation.isPending}
+          isSavingLiquidationMonitor={liquidationMonitorMutation.isPending}
+          isTestingLiquidationAlert={testLiquidationAlertMutation.isPending}
           isResetting={resetSystemMutation.isPending}
           onClose={() => { setShowSettings(false); setEditingChannel(null) }}
         />
@@ -941,9 +1033,14 @@ function SettingsDialog({
   onTestChannel,
   onDeleteChannel,
   onSaveSchedule,
+  liquidationMonitor,
+  onSaveLiquidationMonitor,
+  onTestLiquidationAlert,
   onResetSystem,
   isSavingChannel,
   isSavingSchedule,
+  isSavingLiquidationMonitor,
+  isTestingLiquidationAlert,
   isResetting,
   onClose,
 }: {
@@ -955,9 +1052,14 @@ function SettingsDialog({
   onTestChannel: (id: number) => void
   onDeleteChannel: (id: number) => void
   onSaveSchedule: (payload: ScheduleResponse) => void
+  liquidationMonitor?: LiquidationMonitorResponse
+  onSaveLiquidationMonitor: (payload: UpdateLiquidationMonitorPayload) => void
+  onTestLiquidationAlert: () => void
   onResetSystem: () => void
   isSavingChannel: boolean
   isSavingSchedule: boolean
+  isSavingLiquidationMonitor: boolean
+  isTestingLiquidationAlert: boolean
   isResetting: boolean
   onClose: () => void
 }) {
@@ -1081,6 +1183,22 @@ function SettingsDialog({
             />
           </article>
 
+          <article className="panel">
+            <div className="panel-head">
+              <div>
+                <p className="panel-kicker">风险</p>
+                <h3>爆仓监控</h3>
+              </div>
+            </div>
+            <LiquidationMonitorForm
+              monitor={liquidationMonitor}
+              onSubmit={onSaveLiquidationMonitor}
+              onTestAlert={onTestLiquidationAlert}
+              isSaving={isSavingLiquidationMonitor}
+              isTestingAlert={isTestingLiquidationAlert}
+            />
+          </article>
+
           <article className="panel danger-zone">
             <div className="panel-head">
               <div>
@@ -1125,6 +1243,68 @@ function SettingsDialog({
           </article>
         </div>
       </div>
+    </div>
+  )
+}
+
+function LiquidationRiskPanel({
+  monitor,
+  isRefreshing,
+  onRefresh,
+}: {
+  monitor?: LiquidationMonitorResponse
+  isRefreshing: boolean
+  onRefresh: () => void
+}) {
+  const positions = monitor?.positions ?? []
+
+  return (
+    <div className="liquidation-block">
+      <div className="asset-totals-head">
+        <h3>爆仓风险</h3>
+        <span>
+          {monitor?.config.monitorEnabled
+            ? `监控中 · ${formatFrequency(monitor.config.checkIntervalSeconds)}`
+            : '监控未开启'}
+        </span>
+      </div>
+      <div className="risk-list" aria-label="爆仓风险仓位">
+        {positions.length > 0 ? (
+          positions.map((position) => (
+            <div key={position.id} className={`risk-row risk-status-${position.status}`}>
+              <div className="risk-main">
+                <strong>{`${position.channelName} · ${position.symbol}`}</strong>
+                <span>{`${position.side} · ${humanizeRiskStatus(position.status)}`}</span>
+              </div>
+              <div className="risk-metric">
+                <span>距离</span>
+                <strong>{formatPercent(position.distancePercent)}</strong>
+              </div>
+              <div className="risk-metric">
+                <span>标记价</span>
+                <strong>{formatUsd(position.markPrice)}</strong>
+              </div>
+              <div className="risk-metric">
+                <span>清算价</span>
+                <strong>{formatUsd(position.liquidationPrice)}</strong>
+              </div>
+              <div className="risk-alert">
+                {humanizeAlertStatus(position.lastAlertStatus)}
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="empty-copy">无合约仓位风险</p>
+        )}
+      </div>
+      <button
+        type="button"
+        className="button button-secondary"
+        onClick={onRefresh}
+        disabled={isRefreshing}
+      >
+        {isRefreshing ? '刷新中...' : '刷新爆仓风险'}
+      </button>
     </div>
   )
 }
@@ -1387,6 +1567,102 @@ function ChannelForm({
             取消
           </button>
         ) : null}
+      </div>
+    </form>
+  )
+}
+
+function LiquidationMonitorForm({
+  monitor,
+  onSubmit,
+  onTestAlert,
+  isSaving,
+  isTestingAlert,
+}: {
+  monitor?: LiquidationMonitorResponse
+  onSubmit: (payload: UpdateLiquidationMonitorPayload) => void
+  onTestAlert: () => void
+  isSaving: boolean
+  isTestingAlert: boolean
+}) {
+  const config = monitor?.config
+  const form = useForm<LiquidationMonitorFormInput, undefined, LiquidationMonitorFormValues>({
+    resolver: zodResolver(liquidationMonitorSchema),
+    defaultValues: {
+      monitorEnabled: config?.monitorEnabled ?? false,
+      alertEnabled: config?.alertEnabled ?? false,
+      thresholdPercent: config?.thresholdPercent ?? '5',
+      checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
+      miaoCode: '',
+    },
+  })
+  const { register, handleSubmit, reset, formState: { errors } } = form
+
+  useEffect(() => {
+    reset({
+      monitorEnabled: config?.monitorEnabled ?? false,
+      alertEnabled: config?.alertEnabled ?? false,
+      thresholdPercent: config?.thresholdPercent ?? '5',
+      checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
+      miaoCode: '',
+    })
+  }, [config, reset])
+
+  return (
+    <form
+      className="liquidation-form"
+      onSubmit={handleSubmit((values) => {
+        const miaoCode = values.miaoCode?.trim()
+        onSubmit({
+          monitorEnabled: values.monitorEnabled,
+          alertEnabled: values.alertEnabled,
+          thresholdPercent: values.thresholdPercent,
+          checkIntervalSeconds: values.checkIntervalSeconds,
+          ...(miaoCode ? { miaoCode } : {}),
+        })
+      })}
+    >
+      <div className="toggle-row">
+        <label className="toggle-label">
+          <input type="checkbox" {...register('monitorEnabled')} />
+          开启监控
+        </label>
+        <label className="toggle-label">
+          <input type="checkbox" {...register('alertEnabled')} />
+          开启电话提醒
+        </label>
+      </div>
+      <Field label="提醒阈值" error={errors.thresholdPercent?.message}>
+        <input type="number" step="0.0001" min="0" {...register('thresholdPercent')} />
+      </Field>
+      <Field label="监控频率" error={errors.checkIntervalSeconds?.message}>
+        <select {...register('checkIntervalSeconds', { valueAsNumber: true })}>
+          {(config?.supportedFrequencies ?? [30, 60, 180, 300, 900, 1800, 3600]).map((seconds) => (
+            <option key={seconds} value={seconds}>
+              {formatFrequency(seconds)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="喵码" error={errors.miaoCode?.message}>
+        <input
+          type="password"
+          {...register('miaoCode')}
+          placeholder={config?.miaoCodeConfigured ? '已配置' : '输入喵码'}
+        />
+      </Field>
+      <div className="form-actions">
+        <button type="submit" className="button button-primary" disabled={isSaving}>
+          {isSaving ? '保存中...' : '保存爆仓监控'}
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={onTestAlert}
+          disabled={isTestingAlert}
+        >
+          {isTestingAlert ? '测试中...' : '测试电话提醒'}
+        </button>
       </div>
     </form>
   )
