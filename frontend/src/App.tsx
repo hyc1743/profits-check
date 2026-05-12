@@ -390,6 +390,22 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     onError: (error) => setNotice(error.message),
   })
 
+  const resetSystemMutation = useMutation({
+    mutationFn: api.resetSystem,
+    onSuccess: async () => {
+      setEditingChannel(null)
+      setPendingSnapshotDeleteId(null)
+      setNotice('所有配置已清空。')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['channels'] }),
+        queryClient.invalidateQueries({ queryKey: ['snapshots'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+      ])
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
   const updateChannelMutation = useMutation({
     mutationFn: ({ id, ...payload }: CreateChannelPayload & { id: number }) =>
       api.updateChannel(id, payload),
@@ -905,8 +921,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           onTestChannel={(id) => testChannelMutation.mutate(id)}
           onDeleteChannel={(id) => deleteChannelMutation.mutate(id)}
           onSaveSchedule={(payload) => scheduleMutation.mutate(payload)}
+          onResetSystem={() => resetSystemMutation.mutate()}
           isSavingChannel={createChannelMutation.isPending || updateChannelMutation.isPending}
           isSavingSchedule={scheduleMutation.isPending}
+          isResetting={resetSystemMutation.isPending}
           onClose={() => { setShowSettings(false); setEditingChannel(null) }}
         />
       ) : null}
@@ -923,8 +941,10 @@ function SettingsDialog({
   onTestChannel,
   onDeleteChannel,
   onSaveSchedule,
+  onResetSystem,
   isSavingChannel,
   isSavingSchedule,
+  isResetting,
   onClose,
 }: {
   channels: ChannelResponse[]
@@ -935,13 +955,16 @@ function SettingsDialog({
   onTestChannel: (id: number) => void
   onDeleteChannel: (id: number) => void
   onSaveSchedule: (payload: ScheduleResponse) => void
+  onResetSystem: () => void
   isSavingChannel: boolean
   isSavingSchedule: boolean
+  isResetting: boolean
   onClose: () => void
 }) {
   const headingId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
+  const [isConfirmingReset, setIsConfirmingReset] = useState(false)
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement
@@ -1056,6 +1079,49 @@ function SettingsDialog({
               onSubmit={onSaveSchedule}
               isSaving={isSavingSchedule}
             />
+          </article>
+
+          <article className="panel danger-zone">
+            <div className="panel-head">
+              <div>
+                <p className="panel-kicker">重置</p>
+                <h3>清空所有配置</h3>
+              </div>
+            </div>
+            <p>将删除所有渠道和快照数据。此操作无法撤销。</p>
+            {isConfirmingReset ? (
+              <div className="danger-actions">
+                <button
+                  type="button"
+                  className="button button-danger"
+                  aria-label="确认清空所有配置"
+                  disabled={isResetting}
+                  onClick={() => {
+                    onResetSystem()
+                    setIsConfirmingReset(false)
+                  }}
+                >
+                  {isResetting ? '清空中...' : '确认清空'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  disabled={isResetting}
+                  onClick={() => setIsConfirmingReset(false)}
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="button button-danger-ghost"
+                disabled={isResetting}
+                onClick={() => setIsConfirmingReset(true)}
+              >
+                清空所有配置
+              </button>
+            )}
           </article>
         </div>
       </div>

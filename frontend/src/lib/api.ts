@@ -78,6 +78,13 @@ export interface SchedulerResponse {
   jobs: Array<{ id: string; trigger?: string }>
 }
 
+export interface ResetSystemResponse {
+  status: string
+  deletedChannels: number
+  deletedSnapshots: number
+  deletedAssets: number
+}
+
 export interface CreateChannelPayload {
   provider: string
   kind: string
@@ -163,5 +170,9 @@ export const api = {
     requestJson<SchedulerResponse>('/api/system/scheduler', {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
+    }),
+  resetSystem: () =>
+    requestJson<ResetSystemResponse>('/api/system/reset', {
+      method: 'POST',
     }),
 }

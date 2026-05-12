@@ -13,12 +13,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from profits_check_backend.config import AppSettings, get_settings
 from profits_check_backend.db import build_session_factory, init_database
-from profits_check_backend.models import AppSetting, Channel, Snapshot
+from profits_check_backend.models import AppSetting, Channel, Snapshot, SnapshotAsset
 from profits_check_backend.providers.registry import build_provider
 from profits_check_backend.security import (
     PASSWORD_SETTING_KEY,
@@ -679,5 +679,23 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         session.commit()
         configure_scheduler(enabled, get_schedule_times(session))
         return get_scheduler_status(object(), session)
+
+    @app.post("/api/system/reset")
+    def reset_system(_: object = Depends(require_session), session: Session = Depends(get_session)):
+        deleted_assets = session.scalar(select(func.count()).select_from(SnapshotAsset)) or 0
+        deleted_snapshots = session.scalar(select(func.count()).select_from(Snapshot)) or 0
+        deleted_channels = session.scalar(select(func.count()).select_from(Channel)) or 0
+
+        session.execute(delete(SnapshotAsset))
+        session.execute(delete(Snapshot))
+        session.execute(delete(Channel))
+        session.commit()
+
+        return {
+            "status": "ok",
+            "deletedChannels": deleted_channels,
+            "deletedSnapshots": deleted_snapshots,
+            "deletedAssets": deleted_assets,
+        }
 
     return app

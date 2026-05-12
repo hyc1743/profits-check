@@ -825,6 +825,21 @@ details[open] summary::before {
   border-radius: var(--radius-md);
 }
 
+.danger-zone {
+  border-color: color-mix(in oklch, var(--danger) 30%, var(--border-faint)) !important;
+}
+
+.danger-zone p {
+  margin: 0 0 1rem;
+  color: var(--danger-strong);
+}
+
+.danger-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .toggle-label {
   display: inline-flex;
   align-items: center;

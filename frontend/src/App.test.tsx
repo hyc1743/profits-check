@@ -261,6 +261,53 @@ test('toggles backend scheduled snapshots without a frontend timer', async () =>
   await waitFor(() => expect(schedulerRequests).toEqual([false, true]))
 })
 
+test('clears all channels and snapshots from settings after confirmation', async () => {
+  installHandlers()
+  let resetCalled = false
+  server.use(
+    http.post('/api/system/reset', () => {
+      resetCalled = true
+      return HttpResponse.json({
+        status: 'ok',
+        deletedChannels: 1,
+        deletedSnapshots: 2,
+        deletedAssets: 3,
+      })
+    }),
+    http.get('/api/channels', () => HttpResponse.json(resetCalled ? [] : channelsPayload)),
+    http.get('/api/snapshots/series', () => HttpResponse.json(resetCalled ? [] : snapshotsPayload)),
+    http.get('/api/summary/latest', () =>
+      HttpResponse.json(
+        resetCalled
+          ? { totalValueUsd: null, assetCount: 0, accountCategoryTotals: [], channels: [] }
+          : summaryPayload,
+      ),
+    ),
+    http.get('/api/summary/live', () =>
+      HttpResponse.json(
+        resetCalled
+          ? { totalValueUsd: null, assetCount: 0, accountCategoryTotals: [], channels: [] }
+          : liveSummaryPayload,
+      ),
+    ),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  await user.click(screen.getByRole('button', { name: '清空所有配置' }))
+  expect(screen.getByText('将删除所有渠道和快照数据。此操作无法撤销。')).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '确认清空所有配置' }))
+
+  await waitFor(() => expect(resetCalled).toBe(true))
+  expect(await screen.findByText('所有配置已清空。')).toBeInTheDocument()
+  expect(await screen.findByText('还没有渠道')).toBeInTheDocument()
+  expect(await screen.findByText('还没有快照')).toBeInTheDocument()
+})
+
 test('uses real snapshot series data and can delete a saved snapshot run', async () => {
   let seriesRequestCount = 0
   const deletedRunIds: string[] = []
