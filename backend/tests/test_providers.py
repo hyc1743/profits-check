@@ -538,6 +538,98 @@ async def test_aster_provider_collects_spot_and_futures_balances(httpx_mock) -> 
 
 
 @pytest.mark.asyncio
+async def test_aster_provider_collects_signed_position_risk(httpx_mock) -> None:
+    from profits_check_backend.providers.aster import AsterProvider
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://tapi.asterdex.com/info",
+        json={
+            "result": {
+                "perpAssets": [{"asset": "USDT", "walletBalance": "1000"}],
+                "spotAssets": [],
+                "positions": [],
+            }
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://fapi.asterdex.com/fapi/v3/positionRisk?timestamp=1700000000000&signature=expected",
+        json=[
+            {
+                "symbol": "BTCUSDT",
+                "positionAmt": "0.5",
+                "entryPrice": "40000",
+                "markPrice": "38000",
+                "liquidationPrice": "30000",
+                "unRealizedProfit": "-100",
+                "positionSide": "LONG",
+            }
+        ],
+    )
+
+    provider = AsterProvider(
+        channel_name="Aster",
+        config={"walletAddress": "0xTest"},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000000",
+        signature_factory=lambda query, secret: "expected",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.assets[0].metadata["positionCount"] == "1"
+    assert snapshot.assets[0].metadata["positions"] == (
+        '[{"symbol":"BTCUSDT","positionAmt":"0.5","positionSide":"LONG",'
+        '"entryPrice":"40000","markPrice":"38000","liquidationPrice":"30000",'
+        '"liquidationDistancePct":"21.05263158","unRealizedProfit":"-100"}]'
+    )
+    assert snapshot.total_value_usd == Decimal("900")
+
+
+@pytest.mark.asyncio
+async def test_aster_provider_uses_infinity_distance_when_liquidation_price_is_missing(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.aster import AsterProvider
+
+    httpx_mock.add_response(
+        method="POST",
+        url="https://tapi.asterdex.com/info",
+        json={
+            "result": {
+                "perpAssets": [],
+                "spotAssets": [],
+                "positions": [
+                    {
+                        "positions": [
+                            {
+                                "symbol": "ETHUSDT",
+                                "positionAmount": "2",
+                                "entryPrice": "3000",
+                                "markPrice": "3200",
+                                "unrealizedProfit": "400",
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    )
+
+    provider = AsterProvider(
+        channel_name="Aster",
+        config={"walletAddress": "0xTest"},
+        secrets={},
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.assets[0].metadata["positionCount"] == "1"
+    assert '"liquidationDistancePct":"∞"' in snapshot.assets[0].metadata["positions"]
+
+
+@pytest.mark.asyncio
 async def test_aster_provider_requires_credentials() -> None:
     from profits_check_backend.providers.aster import AsterProvider
 

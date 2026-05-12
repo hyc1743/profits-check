@@ -347,6 +347,38 @@ test('switches channel form fields for onchain and runs manual snapshot', async 
   })
 })
 
+test('allows Aster channels to save wallet and futures API credentials', async () => {
+  installHandlers()
+  const createdPayloads: Array<Record<string, unknown>> = []
+  server.use(
+    http.post('/api/channels', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      createdPayloads.push(body)
+      return HttpResponse.json({ id: 2, enabled: true, secretConfigured: true, secretConfigMask: {}, ...body }, { status: 201 })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  await user.type(await screen.findByLabelText('名称'), 'AsterMain')
+  await user.selectOptions(screen.getByLabelText('渠道'), 'aster')
+  await user.type(screen.getByLabelText('钱包地址'), '0x1111111111111111111111111111111111111111')
+  await user.type(screen.getByLabelText('API Key'), 'aster-key')
+  await user.type(screen.getByLabelText('API Secret'), 'aster-secret')
+  await user.click(screen.getByRole('button', { name: '保存渠道' }))
+
+  await waitFor(() => expect(createdPayloads).toHaveLength(1))
+  expect(createdPayloads[0]).toMatchObject({
+    provider: 'aster',
+    kind: 'cex',
+    name: 'AsterMain',
+    publicConfig: { walletAddresses: ['0x1111111111111111111111111111111111111111'] },
+    secretConfig: { apiKey: 'aster-key', apiSecret: 'aster-secret' },
+  })
+})
+
 test('loads live balances only after refresh is clicked', async () => {
   installHandlers()
   const user = userEvent.setup()

@@ -1472,6 +1472,7 @@ function ChannelForm({
   const apiSecret = useWatch({ control, name: 'apiSecret' })
   const isOnChain = provider === 'onchain' || provider === 'bsc'
   const isAster = provider === 'aster'
+  const usesWalletAddress = isOnChain || isAster
   const isPassphraseProvider = provider === 'okx' || provider === 'bitget'
   const hasCexData = !!(apiKey || apiSecret)
 
@@ -1482,12 +1483,14 @@ function ChannelForm({
         const publicConfig: Record<string, unknown> = {}
         const secretConfig: Record<string, string> = {}
 
-        if (isOnChain || isAster) {
+        if (usesWalletAddress) {
           publicConfig.walletAddresses = (values.walletAddresses ?? '')
             .split('\n')
             .map((item) => item.trim())
             .filter(Boolean)
-        } else {
+        }
+
+        if (!isOnChain) {
           const masked = editingChannel?.secretConfigMask ?? {}
           if (values.apiKey && values.apiKey !== masked.apiKey) {
             secretConfig.apiKey = values.apiKey
@@ -1498,7 +1501,9 @@ function ChannelForm({
           if (isPassphraseProvider && values.passphrase && values.passphrase !== masked.passphrase) {
             secretConfig.passphrase = values.passphrase
           }
-          publicConfig.accountType = 'spot'
+          if (!isAster) {
+            publicConfig.accountType = 'spot'
+          }
         }
 
         onSubmit({
@@ -1526,9 +1531,9 @@ function ChannelForm({
         </select>
       </Field>
 
-      {isOnChain || isAster ? (
+      {usesWalletAddress ? (
         <div className="field-switch">
-          {hasCexData ? (
+          {isOnChain && hasCexData ? (
             <p className="field-switch-notice" role="alert">
               已切换到钱包地址模式，之前输入的 API 密钥字段将被忽略。
             </p>
@@ -1536,6 +1541,16 @@ function ChannelForm({
           <Field label="钱包地址" error={errors.walletAddresses?.message}>
             <textarea rows={3} {...register('walletAddresses')} />
           </Field>
+          {isAster ? (
+            <>
+              <Field label="API Key" error={errors.apiKey?.message}>
+                <input {...register('apiKey')} />
+              </Field>
+              <Field label="API Secret" error={errors.apiSecret?.message}>
+                <input type="password" {...register('apiSecret')} />
+              </Field>
+            </>
+          ) : null}
         </div>
       ) : (
         <div className="field-switch">
