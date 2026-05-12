@@ -37,6 +37,7 @@ def test_ensure_backend_env_creates_first_run_config(tmp_path, monkeypatch) -> N
     assert "APP_ENCRYPTION_KEY=" in content
     assert "PROFITS_CHECK_BOOTSTRAP_PASSWORD=correct horse battery staple" in content
     assert "DATABASE_URL=sqlite:///./data/app.db" in content
+    assert "PROFITS_CHECK_ALLOWED_HOSTS=" in content
     assert oct(env_path.stat().st_mode & 0o777) == "0o600"
 
 

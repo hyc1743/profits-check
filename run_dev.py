@@ -74,6 +74,8 @@ def ensure_backend_env(path: Path = BACKEND_ENV_FILE) -> None:
         additions.append("DATABASE_URL=sqlite:///./data/app.db")
     if "PROFITS_CHECK_COOKIE_SECURE" not in values and not os.getenv("PROFITS_CHECK_COOKIE_SECURE"):
         additions.append("PROFITS_CHECK_COOKIE_SECURE=false")
+    if "PROFITS_CHECK_ALLOWED_HOSTS" not in values and not os.getenv("PROFITS_CHECK_ALLOWED_HOSTS"):
+        additions.append("PROFITS_CHECK_ALLOWED_HOSTS=")
 
     existing = path.read_text() if path.exists() else ""
     separator = "\n" if existing and not existing.endswith("\n") else ""

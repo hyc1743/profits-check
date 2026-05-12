@@ -69,6 +69,7 @@ Set via environment variables (`PROFITS_CHECK_` prefix or bare names):
 | `APP_ENCRYPTION_KEY` | required | Base64-encoded 32-byte Fernet key for secret encryption |
 | `PROFITS_CHECK_BOOTSTRAP_PASSWORD` | required on first startup | Initial single-user admin password; stored as a password hash after first startup |
 | `PROFITS_CHECK_COOKIE_SECURE` | `false` | Set to `true` when your reverse proxy serves the app over HTTPS |
+| `PROFITS_CHECK_ALLOWED_HOSTS` | empty | Comma-separated public hostnames allowed by Vite, e.g. `profits.example.com` |
 | `PROFITS_CHECK_BACKEND_HOST` | `127.0.0.1` | Host used by `python run_dev.py` for the backend |
 | `PROFITS_CHECK_FRONTEND_HOST` | `127.0.0.1` | Host used by `python run_dev.py` for the frontend |
 
