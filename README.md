@@ -32,17 +32,13 @@ Crypto portfolio asset tracking — connect exchange accounts (CEX) and on-chain
 ### Run Both Services
 
 ```bash
-export APP_ENCRYPTION_KEY="$(cd backend && uv run python - <<'PY'
-from cryptography.fernet import Fernet
-print(Fernet.generate_key().decode())
-PY
-)"
-export PROFITS_CHECK_BOOTSTRAP_PASSWORD="change-this-password"
-python run_dev.py
+python3 run_dev.py
 ```
 
 - Backend: `http://127.0.0.1:8200`
 - Frontend: `http://127.0.0.1:8300` (proxies `/api` to backend)
+
+On first run, the script creates `backend/.env`, generates `APP_ENCRYPTION_KEY`, asks for the initial login password, installs `uv`/`bun` if missing, installs Python 3.12 if needed, and then starts both services.
 
 ### Manual Setup
 

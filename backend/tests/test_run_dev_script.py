@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+
+def load_run_dev() -> ModuleType:
+    path = Path(__file__).resolve().parents[2] / "run_dev.py"
+    spec = importlib.util.spec_from_file_location("run_dev_for_test", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class InteractiveStdin:
+    def isatty(self) -> bool:
+        return True
+
+
+def test_ensure_backend_env_creates_first_run_config(tmp_path, monkeypatch) -> None:
+    run_dev = load_run_dev()
+    env_path = tmp_path / ".env"
+    monkeypatch.delenv("APP_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("PROFITS_CHECK_BOOTSTRAP_PASSWORD", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(run_dev.sys, "stdin", InteractiveStdin())
+    monkeypatch.setattr(run_dev.getpass, "getpass", lambda _: "correct horse battery staple")
+
+    run_dev.ensure_backend_env(env_path)
+
+    content = env_path.read_text()
+    assert "APP_ENCRYPTION_KEY=" in content
+    assert "PROFITS_CHECK_BOOTSTRAP_PASSWORD=correct horse battery staple" in content
+    assert "DATABASE_URL=sqlite:///./data/app.db" in content
+    assert oct(env_path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_ensure_backend_env_refuses_noninteractive_missing_password(tmp_path, monkeypatch) -> None:
+    run_dev = load_run_dev()
+    monkeypatch.delenv("APP_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("PROFITS_CHECK_BOOTSTRAP_PASSWORD", raising=False)
+
+    class NonInteractiveStdin:
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setattr(run_dev.sys, "stdin", NonInteractiveStdin())
+
+    try:
+        run_dev.ensure_backend_env(tmp_path / ".env")
+    except RuntimeError as exc:
+        assert "PROFITS_CHECK_BOOTSTRAP_PASSWORD" in str(exc)
+    else:
+        raise AssertionError("Expected missing noninteractive password to fail")
+
+
+def test_ensure_tool_installs_when_missing(monkeypatch) -> None:
+    run_dev = load_run_dev()
+    calls: list[str] = []
+    lookup_results = iter([None, "/tmp/bin/uv"])
+    monkeypatch.setattr(run_dev, "which", lambda *_args, **_kwargs: next(lookup_results))
+    monkeypatch.setattr(
+        run_dev, "install_shell_script", lambda _url, name, _env: calls.append(name)
+    )
+
+    run_dev.ensure_tool("uv", "https://example.invalid/uv.sh", {"PATH": "/tmp/bin"})
+
+    assert calls == ["uv"]
