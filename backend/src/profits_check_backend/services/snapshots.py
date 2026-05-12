@@ -12,12 +12,13 @@ from sqlalchemy.orm import Session
 
 from profits_check_backend.models import AppSetting, Channel, Snapshot, SnapshotAsset
 from profits_check_backend.providers.base import ProviderSnapshot
+from profits_check_backend.security import SecretCipher
 from profits_check_backend.services.channels import decode_public_config, decode_secret_config
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _get_okx_dex_secrets(session: Session, cipher: object) -> dict[str, str]:
+def _get_okx_dex_secrets(session: Session, cipher: SecretCipher) -> dict[str, str]:
     setting = session.get(AppSetting, "okxDexConfig")
     if not setting:
         return {}
@@ -158,7 +159,9 @@ async def execute_snapshot_run(
             if run_id is None:
                 run_id = snapshot.id
             snapshot.run_id = run_id
-            for balance in provider_snapshot_to_balances(channel=channel, provider_snapshot=provider_snapshot):
+            for balance in provider_snapshot_to_balances(
+                channel=channel, provider_snapshot=provider_snapshot
+            ):
                 session.add(
                     SnapshotAsset(
                         snapshot_id=snapshot.id,
@@ -305,7 +308,10 @@ def snapshots_for_run(session: Session, run_id: int) -> list[Snapshot]:
     snapshots = list(
         session.scalars(
             select(Snapshot)
-            .where((Snapshot.run_id == run_id) | ((Snapshot.run_id.is_(None)) & (Snapshot.id == run_id)))
+            .where(
+                (Snapshot.run_id == run_id)
+                | ((Snapshot.run_id.is_(None)) & (Snapshot.id == run_id))
+            )
             .order_by(Snapshot.id)
         )
     )
@@ -333,7 +339,9 @@ def list_snapshot_runs(session: Session) -> list[dict[str, Any]]:
                 "id": run_id,
                 "status": status,
                 "totalValueUsd": quantize_decimal(total_value),
-                "createdAt": max(snapshot.created_at for snapshot in run_snapshots).replace(tzinfo=UTC).isoformat(),
+                "createdAt": max(snapshot.created_at for snapshot in run_snapshots)
+                .replace(tzinfo=UTC)
+                .isoformat(),
                 "snapshotCount": len(run_snapshots),
             }
         )

@@ -196,12 +196,101 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ProfitConsole />
+      <AuthGate />
     </QueryClientProvider>
   )
 }
 
-function ProfitConsole() {
+function AuthGate() {
+  const queryClient = useQueryClient()
+  const sessionQuery = useQuery({ queryKey: ['auth', 'session'], queryFn: api.getAuthSession })
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      queryClient.setQueryData(['auth', 'session'], { authenticated: false })
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'auth' })
+    }
+
+    window.addEventListener('profits-check:unauthorized', handleUnauthorized)
+    return () => window.removeEventListener('profits-check:unauthorized', handleUnauthorized)
+  }, [queryClient])
+
+  if (sessionQuery.isLoading) {
+    return (
+      <main className="shell auth-shell">
+        <div className="grain" aria-hidden="true" />
+        <p className="auth-loading">Checking session...</p>
+      </main>
+    )
+  }
+
+  if (sessionQuery.isError || !sessionQuery.data?.authenticated) {
+    return (
+      <LoginView
+        onAuthenticated={async () => {
+          queryClient.setQueryData(['auth', 'session'], { authenticated: true })
+          await queryClient.invalidateQueries({ queryKey: ['auth', 'session'] })
+        }}
+      />
+    )
+  }
+
+  return (
+    <ProfitConsole
+      onLogout={async () => {
+        await api.logout()
+        queryClient.clear()
+        queryClient.setQueryData(['auth', 'session'], { authenticated: false })
+      }}
+    />
+  )
+}
+
+function LoginView({ onAuthenticated }: { onAuthenticated: () => Promise<void> }) {
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const loginMutation = useMutation({
+    mutationFn: api.login,
+    onSuccess: async () => {
+      setError(null)
+      await onAuthenticated()
+    },
+    onError: (loginError) => setError(loginError.message),
+  })
+
+  return (
+    <main className="shell auth-shell">
+      <div className="grain" aria-hidden="true" />
+      <section className="auth-panel" aria-labelledby="login-title">
+        <p className="panel-kicker">Private console</p>
+        <h1 id="login-title">Profits Check</h1>
+        <form
+          className="auth-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            loginMutation.mutate(password)
+          }}
+        >
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button type="submit" className="button button-primary" disabled={loginMutation.isPending || !password}>
+            {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
+function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const queryClient = useQueryClient()
   const [chartPalette] = useState(readChartPalette)
   const [notice, setNotice] = useState<string | null>(null)
@@ -424,9 +513,14 @@ function ProfitConsole() {
       <div className="grain" aria-hidden="true" />
       <div className="top-bar">
         <div />
-        <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
-          设置
-        </button>
+        <div className="top-actions">
+          <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
+            设置
+          </button>
+          <button type="button" className="settings-button" onClick={() => void onLogout()}>
+            Sign out
+          </button>
+        </div>
       </div>
 
       {notice ? (

@@ -2,6 +2,10 @@ export interface HealthResponse {
   status: string
 }
 
+export interface AuthSessionResponse {
+  authenticated: boolean
+}
+
 export interface ChannelResponse {
   id: number
   name: string
@@ -84,6 +88,7 @@ export interface CreateChannelPayload {
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   })
@@ -95,7 +100,11 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // response body is not JSON
     }
-    throw new Error(detail || `Request failed: ${response.status} ${response.statusText}`)
+    const error = new Error(detail || `Request failed: ${response.status} ${response.statusText}`)
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('profits-check:unauthorized'))
+    }
+    throw error
   }
   if (response.status === 204) {
     return undefined as T
@@ -104,6 +113,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getAuthSession: () => requestJson<AuthSessionResponse>('/api/auth/session'),
+  login: (password: string) =>
+    requestJson<AuthSessionResponse>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  logout: () =>
+    requestJson<AuthSessionResponse>('/api/auth/logout', {
+      method: 'POST',
+    }),
   getHealth: () => requestJson<HealthResponse>('/api/health'),
   getLatestSummary: () => requestJson<SummaryResponse>('/api/summary/latest'),
   getLiveSummary: () => requestJson<SummaryResponse>('/api/summary/live'),

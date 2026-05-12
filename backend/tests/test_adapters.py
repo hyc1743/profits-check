@@ -37,7 +37,12 @@ def test_bsc_adapter_normalizes_native_and_token_balances() -> None:
             "native": {"symbol": "BNB", "balance": "3.5", "priceUsd": "600"},
             "tokens": [
                 {"symbol": "USDT", "balance": "1200", "priceUsd": "1", "contractAddress": "0x2222"},
-                {"symbol": "CAKE", "balance": "250", "priceUsd": "2.9", "contractAddress": "0x3333"},
+                {
+                    "symbol": "CAKE",
+                    "balance": "250",
+                    "priceUsd": "2.9",
+                    "contractAddress": "0x3333",
+                },
             ],
         },
     )

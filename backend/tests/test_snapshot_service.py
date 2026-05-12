@@ -35,7 +35,6 @@ def test_snapshot_run_persists_assets_and_summary(client) -> None:
             "kind": "chain",
             "name": "BSC Wallets",
             "publicConfig": {
-                "rpcUrl": "https://bsc.local",
                 "walletAddresses": ["0x1111111111111111111111111111111111111111"],
                 "tokens": [{"contractAddress": "0x2222222222222222222222222222222222222222"}],
             },

@@ -25,7 +25,7 @@ uv run pytest                    # run all tests
 uv run pytest tests/test_providers.py -k "test_binance"  # run a single test
 uv run ruff check .              # lint
 uv run ruff format --check .     # format check
-uv run mypy                      # type check
+uv run mypy src tests            # type check
 uv run alembic upgrade head      # run migrations
 ```
 

@@ -7,7 +7,13 @@ from decimal import Decimal
 
 import httpx
 
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class GateProvider(Provider):
@@ -23,7 +29,9 @@ class GateProvider(Provider):
         self.secrets = secrets
         self.now_factory = now_factory or (lambda: str(int(time.time())))
 
-    def _signature_headers(self, method: str, path: str, query: str = "", body: str = "") -> dict[str, str]:
+    def _signature_headers(
+        self, method: str, path: str, query: str = "", body: str = ""
+    ) -> dict[str, str]:
         api_key = str(self.secrets.get("apiKey", self.secrets.get("api_key", "")))
         api_secret = str(self.secrets.get("apiSecret", self.secrets.get("api_secret", "")))
         if not api_key or not api_secret:
@@ -32,7 +40,9 @@ class GateProvider(Provider):
         timestamp = str(self.now_factory())
         hashed_payload = hashlib.sha512(body.encode("utf-8")).hexdigest()
         sign_string = f"{method}\n{path}\n{query}\n{hashed_payload}\n{timestamp}"
-        sign = hmac.new(api_secret.encode("utf-8"), sign_string.encode("utf-8"), hashlib.sha512).hexdigest()
+        sign = hmac.new(
+            api_secret.encode("utf-8"), sign_string.encode("utf-8"), hashlib.sha512
+        ).hexdigest()
         return {
             "KEY": api_key,
             "Timestamp": timestamp,
@@ -40,9 +50,11 @@ class GateProvider(Provider):
         }
 
     async def collect_snapshot(self) -> ProviderSnapshot:
-        base_url = str(self.config.get("baseUrl", self.config.get("base_url", "https://api.gateio.ws/api/v4"))).rstrip("/")
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.gateio.ws/api/v4"))
+        ).rstrip("/")
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             wallet_total = await self._fetch_wallet_total(client, base_url)
 
             if wallet_total:

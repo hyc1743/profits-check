@@ -28,7 +28,7 @@ def test_sqlite_parent_directory_is_created_for_missing_path(tmp_path: Path, mon
     monkeypatch.delenv("PROFITS_CHECK_DATABASE_URL", raising=False)
     target_dir = tmp_path / "missing" / "nested"
     settings = AppSettings(
-        PROFITS_CHECK_DATABASE_URL=f"sqlite:///{target_dir / 'app.db'}",
+        database_url=f"sqlite:///{target_dir / 'app.db'}",
     )
 
     session_factory = build_session_factory(settings)

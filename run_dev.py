@@ -12,8 +12,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
-BACKEND_HOST = "0.0.0.0"
-FRONTEND_HOST = "0.0.0.0"
+BACKEND_HOST = os.getenv("PROFITS_CHECK_BACKEND_HOST", "127.0.0.1")
+FRONTEND_HOST = os.getenv("PROFITS_CHECK_FRONTEND_HOST", "127.0.0.1")
 BACKEND_URL = f"http://{BACKEND_HOST}:8200"
 FRONTEND_URL = f"http://{FRONTEND_HOST}:8300"
 

@@ -5,8 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from profits_check_backend.domain.models import ProviderType
-from profits_check_backend.providers.base import AssetBalance, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import AssetBalance, ProviderError
 from profits_check_backend.providers.registry import build_provider
 
 
@@ -175,6 +174,7 @@ async def test_bsc_provider_collects_native_and_token_balances(httpx_mock) -> No
     )
 
     import os
+
     os.environ["OKX_DEX_API_KEY"] = "key"
     os.environ["OKX_DEX_API_SECRET"] = "secret"
     os.environ["OKX_DEX_API_PASSPHRASE"] = "pass"
@@ -393,10 +393,12 @@ async def test_aster_provider_collects_spot_and_futures_balances(httpx_mock) -> 
         config={"walletAddress": "0xTest"},
         secrets={},
     )
+
     async def fake_price(c, a, q):
         if a == "ASTER":
             return Decimal("2.5") * q
         return q if a in ("USDT", "USDC") else None
+
     provider._estimate_spot_price = fake_price  # type: ignore[method-assign]
 
     snapshot = await provider.collect_snapshot()

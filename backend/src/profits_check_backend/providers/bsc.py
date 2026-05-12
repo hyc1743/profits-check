@@ -7,10 +7,14 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
-import httpx
-
 from profits_check_backend.config import get_settings
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class OnChainProvider(Provider):
@@ -78,7 +82,7 @@ class OnChainProvider(Provider):
         )
         headers = self._signature_headers("GET", path)
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             response = await client.get(f"{base_url}{path}", headers=headers)
             response.raise_for_status()
             payload = response.json()
@@ -116,10 +120,7 @@ class OnChainProvider(Provider):
 
         return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
-
-    def normalize_mock_payload(
-        self, channel_id: int, payload: dict[str, object]
-    ) -> list[Any]:
+    def normalize_mock_payload(self, channel_id: int, payload: dict[str, object]) -> list[Any]:
         from profits_check_backend.services.snapshots import NormalizedAssetBalance
 
         balances = []

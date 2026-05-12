@@ -62,7 +62,7 @@ def test_unimplemented_channel_returns_test_failure(client) -> None:
     test_response = client.post(f"/api/channels/{create_response.json()['id']}/test")
 
     assert test_response.status_code == 400
-    assert "wallet address" in test_response.json()["detail"].lower()
+    assert test_response.json()["detail"] == "Channel test failed"
 
 
 def test_schedule_can_be_read_and_updated(client) -> None:

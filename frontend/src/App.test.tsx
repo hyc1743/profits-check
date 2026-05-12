@@ -87,6 +87,9 @@ const schedulerPayload = {
 
 function installHandlers() {
   server.use(
+    http.get('/api/auth/session', () => HttpResponse.json({ authenticated: true })),
+    http.post('/api/auth/login', () => HttpResponse.json({ authenticated: true })),
+    http.post('/api/auth/logout', () => HttpResponse.json({ authenticated: false })),
     http.get('/api/health', () => HttpResponse.json({ status: 'ok' })),
     http.get('/api/summary/latest', () => HttpResponse.json(summaryPayload)),
     http.get('/api/summary/live', () => HttpResponse.json(liveSummaryPayload)),
@@ -115,6 +118,49 @@ function installHandlers() {
     http.delete('/api/snapshots/runs/:runId', () => new HttpResponse(null, { status: 204 })),
   )
 }
+
+test('shows login screen when no session exists', async () => {
+  server.use(http.get('/api/auth/session', () => HttpResponse.json({ authenticated: false })))
+
+  render(<App />)
+
+  expect(await screen.findByRole('heading', { name: 'Profits Check' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Password')).toBeInTheDocument()
+  expect(screen.queryByText('总资产')).not.toBeInTheDocument()
+})
+
+test('logs in and loads the dashboard', async () => {
+  installHandlers()
+  let sessionAuthenticated = false
+  const loginRequests: string[] = []
+  server.use(
+    http.get('/api/auth/session', () => HttpResponse.json({ authenticated: sessionAuthenticated })),
+    http.post('/api/auth/login', async ({ request }) => {
+      const body = (await request.json()) as { password: string }
+      loginRequests.push(body.password)
+      sessionAuthenticated = true
+      return HttpResponse.json({ authenticated: true })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.type(await screen.findByLabelText('Password'), 'correct horse battery staple')
+  await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+  expect(loginRequests).toEqual(['correct horse battery staple'])
+  expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
+})
+
+test('returns to login when an authenticated request receives 401', async () => {
+  installHandlers()
+  server.use(http.get('/api/summary/latest', () => HttpResponse.json({ detail: 'Authentication required' }, { status: 401 })))
+
+  render(<App />)
+
+  expect(await screen.findByLabelText('Password')).toBeInTheDocument()
+})
 
 test('renders dashboard data and latest snapshot detail', async () => {
   installHandlers()
@@ -162,7 +208,7 @@ test('switches channel form fields for onchain and runs manual snapshot', async 
 
   render(<App />)
 
-  await user.click(screen.getByRole('button', { name: '设置' }))
+  await user.click(await screen.findByRole('button', { name: '设置' }))
   const providerSelect = await screen.findByLabelText('渠道')
   await user.selectOptions(providerSelect, 'onchain')
 

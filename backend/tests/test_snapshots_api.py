@@ -28,11 +28,9 @@ def test_manual_snapshot_persists_assets_and_summary(client) -> None:
             "name": "Main Binance",
             "provider_type": "binance",
             "enabled": True,
-            "config": {
-                "api_key": "public-key",
-                "base_url": "https://binance.example",
-            },
+            "config": {},
             "secrets": {
+                "api_key": "public-key",
                 "api_secret": "secret-key",
             },
         },

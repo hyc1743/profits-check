@@ -6,9 +6,13 @@ import time
 from decimal import Decimal
 from urllib.parse import urlencode
 
-import httpx
-
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class BybitProvider(Provider):
@@ -46,12 +50,14 @@ class BybitProvider(Provider):
         }
 
     async def collect_snapshot(self) -> ProviderSnapshot:
-        base_url = str(self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))).rstrip("/")
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))
+        ).rstrip("/")
         params = {"accountType": "UNIFIED"}
         query_string = urlencode(params)
         headers = self._signature_headers(query_string)
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             response = await client.get(
                 f"{base_url}/v5/account/wallet-balance",
                 headers=headers,

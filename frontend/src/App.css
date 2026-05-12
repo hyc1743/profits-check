@@ -85,6 +85,44 @@
   background: color-mix(in oklch, var(--paper) 88%, var(--accent) 12%);
 }
 
+.auth-shell {
+  display: grid;
+  place-items: center;
+}
+
+.auth-loading {
+  position: relative;
+  z-index: 1;
+  color: var(--text-soft);
+}
+
+.auth-panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 28rem);
+  padding: clamp(1.4rem, 3vw, 2.2rem);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-panel);
+}
+
+.auth-panel h1 {
+  margin: 0 0 1.25rem;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
 .grid {
   position: relative;
   z-index: 1;
@@ -714,9 +752,16 @@ details[open] summary::before {
   border-radius: var(--radius-md);
 }
 
+.top-actions {
+  display: flex;
+  gap: 0.55rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* --------- settings overlay --------- */
 .settings-button {
-  margin-left: auto;
   min-height: 2.75rem;
   padding: 0.5rem 1rem;
   border: 1px solid var(--border-strong);

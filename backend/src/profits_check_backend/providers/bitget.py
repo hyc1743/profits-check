@@ -8,7 +8,13 @@ from decimal import Decimal
 
 import httpx
 
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class BitgetProvider(Provider):
@@ -24,7 +30,9 @@ class BitgetProvider(Provider):
         self.secrets = secrets
         self.now_factory = now_factory or (lambda: str(int(time.time() * 1000)))
 
-    def _signature_headers(self, method: str, request_path: str, query: str = "", body: str = "") -> dict[str, str]:
+    def _signature_headers(
+        self, method: str, request_path: str, query: str = "", body: str = ""
+    ) -> dict[str, str]:
         api_key = str(self.secrets.get("apiKey", ""))
         api_secret = str(self.secrets.get("apiSecret", ""))
         passphrase = str(self.secrets.get("passphrase", ""))
@@ -46,9 +54,11 @@ class BitgetProvider(Provider):
         }
 
     async def collect_snapshot(self) -> ProviderSnapshot:
-        base_url = str(self.config.get("baseUrl", self.config.get("base_url", "https://api.bitget.com"))).rstrip("/")
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bitget.com"))
+        ).rstrip("/")
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             assets, total_value = await self._collect_spot(client, base_url)
             futures_assets, futures_total = await self._collect_futures(client, base_url)
             assets.extend(futures_assets)
@@ -62,7 +72,9 @@ class BitgetProvider(Provider):
         query = "assetType=all"
         headers = self._signature_headers("GET", path, query=query)
 
-        response = await client.get(f"{base_url}{path}", headers=headers, params={"assetType": "all"})
+        response = await client.get(
+            f"{base_url}{path}", headers=headers, params={"assetType": "all"}
+        )
         response.raise_for_status()
         payload = response.json()
 

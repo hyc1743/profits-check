@@ -9,7 +9,13 @@ from urllib.parse import urlencode
 
 import httpx
 
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class BinanceProvider(Provider):
@@ -35,25 +41,33 @@ class BinanceProvider(Provider):
             self.config.get("base_url", self.config.get("baseUrl", "https://api.binance.com"))
         ).rstrip("/")
         futures_base_url = str(
-            self.config.get("futures_base_url", self.config.get("futuresBaseUrl", "https://fapi.binance.com"))
+            self.config.get(
+                "futures_base_url", self.config.get("futuresBaseUrl", "https://fapi.binance.com")
+            )
         ).rstrip("/")
         api_key = str(
             self.config.get(
                 "api_key",
-                self.config.get("apiKey", self.secrets.get("api_key", self.secrets.get("apiKey", ""))),
+                self.config.get(
+                    "apiKey", self.secrets.get("api_key", self.secrets.get("apiKey", ""))
+                ),
             )
         )
         api_secret = str(self.secrets.get("api_secret", self.secrets.get("apiSecret", "")))
         if not base_url or not api_key or not api_secret:
             raise ProviderError("Binance API credentials are incomplete")
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             assets, total_value = await self._collect_spot(client, base_url, api_key, api_secret)
             futures_assets, futures_total = await self._collect_futures(
                 client, futures_base_url, api_key, api_secret
             )
-            earn_assets, earn_total = await self._collect_earn(client, base_url, api_key, api_secret)
-            loan_assets, loan_total = await self._collect_loans(client, base_url, api_key, api_secret)
+            earn_assets, earn_total = await self._collect_earn(
+                client, base_url, api_key, api_secret
+            )
+            loan_assets, loan_total = await self._collect_loans(
+                client, base_url, api_key, api_secret
+            )
             assets.extend(futures_assets)
             assets.extend(earn_assets)
             assets.extend(loan_assets)
@@ -81,7 +95,9 @@ class BinanceProvider(Provider):
             quantity = free + locked
             if quantity == 0:
                 continue
-            value_usd = await self._estimate_asset_usd(client, base_url, api_key, asset_name, quantity)
+            value_usd = await self._estimate_asset_usd(
+                client, base_url, api_key, asset_name, quantity
+            )
             assets.append(
                 AssetBalance(
                     asset_symbol=asset_name,
@@ -95,7 +111,12 @@ class BinanceProvider(Provider):
         return assets, total_value
 
     async def _estimate_asset_usd(
-        self, client: httpx.AsyncClient, base_url: str, api_key: str, asset_name: str, quantity: Decimal
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        api_key: str,
+        asset_name: str,
+        quantity: Decimal,
     ) -> Decimal | None:
         if asset_name in ("USDT", "USDC", "USD", "BUSD", "FDUSD"):
             return quantity
@@ -176,7 +197,9 @@ class BinanceProvider(Provider):
                     if total_amount == 0:
                         continue
                     asset_name = str(item.get("asset", "")).upper()
-                    value_usd = await self._estimate_asset_usd(client, base_url, api_key, asset_name, total_amount)
+                    value_usd = await self._estimate_asset_usd(
+                        client, base_url, api_key, asset_name, total_amount
+                    )
                     assets.append(
                         AssetBalance(
                             asset_symbol=asset_name,
@@ -251,9 +274,7 @@ class BinanceProvider(Provider):
         except Exception:
             return [], Decimal("0")
 
-    def normalize_mock_payload(
-        self, channel_id: int, payload: dict[str, object]
-    ) -> list[Any]:
+    def normalize_mock_payload(self, channel_id: int, payload: dict[str, object]) -> list[Any]:
         from profits_check_backend.services.snapshots import NormalizedAssetBalance
 
         prices = cast(dict[str, object], payload["prices"])

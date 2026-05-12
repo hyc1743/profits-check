@@ -15,8 +15,7 @@ class BscAdapter:
                 asset=payload["native"]["symbol"],
                 total=Decimal(payload["native"]["balance"]),
                 value_usd=(
-                    Decimal(payload["native"]["balance"])
-                    * Decimal(payload["native"]["priceUsd"])
+                    Decimal(payload["native"]["balance"]) * Decimal(payload["native"]["priceUsd"])
                 ),
                 account_scope=f"wallet:{wallet}",
             )

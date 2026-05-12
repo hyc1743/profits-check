@@ -2,23 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from http import HTTPStatus
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from profits_check_backend.config import AppSettings, get_settings
 from profits_check_backend.db import build_session_factory, init_database
-from profits_check_backend.models import Channel, Snapshot
+from profits_check_backend.models import AppSetting, Channel, Snapshot
 from profits_check_backend.providers.registry import build_provider
-from profits_check_backend.security import SecretCipher
+from profits_check_backend.security import (
+    PASSWORD_SETTING_KEY,
+    SESSION_COOKIE_NAME,
+    SecretCipher,
+    create_session,
+    ensure_admin_password,
+    get_valid_session,
+    hash_password,
+    revoke_all_sessions,
+    revoke_session,
+    verify_password,
+)
 from profits_check_backend.services.channels import (
     channel_payload,
     create_channel,
@@ -38,6 +51,124 @@ from profits_check_backend.services.snapshots import (
     snapshot_detail,
 )
 
+SECRET_PUBLIC_CONFIG_KEYS = {
+    "apiKey",
+    "api_key",
+    "apiSecret",
+    "api_secret",
+    "passphrase",
+    "secret",
+    "password",
+}
+
+CUSTOM_URL_KEYS = {
+    "baseUrl",
+    "base_url",
+    "futuresBaseUrl",
+    "futures_base_url",
+    "rpcUrl",
+    "rpc_url",
+}
+
+
+class LoginPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class ChangePasswordPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(alias="currentPassword", min_length=1, max_length=1024)
+    new_password: str = Field(alias="newPassword", min_length=12, max_length=1024)
+
+
+class ChannelPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    provider: str | None = Field(default=None, max_length=32)
+    provider_type: str | None = Field(default=None, alias="provider_type", max_length=32)
+    kind: str = Field(default="cex", max_length=32)
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    public_config: dict[str, object] = Field(default_factory=dict, alias="publicConfig")
+    config: dict[str, object] | None = None
+    secret_config: dict[str, str] = Field(default_factory=dict, alias="secretConfig")
+    secrets: dict[str, str] | None = None
+
+    @field_validator("provider", "provider_type")
+    @classmethod
+    def validate_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        from profits_check_backend.domain.models import ProviderType
+
+        try:
+            ProviderType(value)
+        except ValueError as exc:
+            raise ValueError("Unsupported provider") from exc
+        return value
+
+    @model_validator(mode="after")
+    def require_provider(self) -> ChannelPayload:
+        if self.provider is None and self.provider_type is None:
+            raise ValueError("provider is required")
+        return self
+
+    def provider_value(self) -> str:
+        return str(self.provider or self.provider_type)
+
+    @field_validator("public_config", "config")
+    @classmethod
+    def validate_public_config(cls, value: dict[str, object] | None) -> dict[str, object] | None:
+        if value is None:
+            return value
+        forbidden = SECRET_PUBLIC_CONFIG_KEYS.intersection(value)
+        if forbidden:
+            raise ValueError("Secret fields must be sent in secretConfig")
+        if CUSTOM_URL_KEYS.intersection(value):
+            raise ValueError("Custom provider URLs are disabled")
+        return value
+
+    def merged_public_config(self) -> dict[str, object]:
+        return self.public_config if self.config is None else self.config
+
+    def merged_secret_config(self) -> dict[str, str]:
+        return self.secret_config if self.secrets is None else self.secrets
+
+
+class ChannelUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    provider: str | None = Field(default=None, max_length=32)
+    provider_type: str | None = Field(default=None, alias="provider_type", max_length=32)
+    kind: str | None = Field(default=None, max_length=32)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+    public_config: dict[str, object] | None = Field(default=None, alias="publicConfig")
+    config: dict[str, object] | None = None
+    secret_config: dict[str, str] | None = Field(default=None, alias="secretConfig")
+    secrets: dict[str, str] | None = None
+
+    @field_validator("public_config", "config")
+    @classmethod
+    def validate_public_config(cls, value: dict[str, object] | None) -> dict[str, object] | None:
+        if value is None:
+            return value
+        forbidden = SECRET_PUBLIC_CONFIG_KEYS.intersection(value)
+        if forbidden:
+            raise ValueError("Secret fields must be sent in secretConfig")
+        if CUSTOM_URL_KEYS.intersection(value):
+            raise ValueError("Custom provider URLs are disabled")
+        return value
+
+    def merged_public_config(self) -> dict[str, object] | None:
+        return self.public_config if self.config is None else self.config
+
+    def merged_secret_config(self) -> dict[str, str] | None:
+        return self.secret_config if self.secrets is None else self.secrets
+
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
@@ -46,6 +177,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     cipher = SecretCipher.from_settings(app_settings)
     scheduler_timezone = ZoneInfo("Asia/Shanghai")
     scheduler = BackgroundScheduler(timezone=scheduler_timezone)
+    snapshot_lock = threading.Lock()
+    live_summary_lock = threading.Lock()
+    channel_test_lock = threading.Lock()
 
     def get_schedule_times(session: Session) -> str:
         return json.loads(
@@ -81,20 +215,27 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         return False
 
     def run_scheduled_snapshot() -> None:
+        if not snapshot_lock.acquire(blocking=False):
+            return
         with session_factory() as session:
-            if _has_snapshot_today(session):
-                return
-            channels = list(
-                session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
-            )
-            asyncio.run(
-                execute_snapshot_run(
-                    session=session,
-                    channels=channels,
-                    cipher=cipher,
-                    provider_builder=app.state.provider_builder,
+            try:
+                if _has_snapshot_today(session):
+                    return
+                channels = list(
+                    session.scalars(
+                        select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
+                    )
                 )
-            )
+                asyncio.run(
+                    execute_snapshot_run(
+                        session=session,
+                        channels=channels,
+                        cipher=cipher,
+                        provider_builder=app.state.provider_builder,
+                    )
+                )
+            finally:
+                snapshot_lock.release()
 
     def scheduled_jobs_payload() -> list[dict[str, str]]:
         return [{"id": job.id, "trigger": str(job.trigger)} for job in scheduler.get_jobs()]
@@ -133,7 +274,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         app.state.cipher = cipher
         app.state.provider_builder = build_provider
         app.state.scheduler = scheduler
+        app.state.snapshot_lock = snapshot_lock
+        app.state.live_summary_lock = live_summary_lock
+        app.state.channel_test_lock = channel_test_lock
         with session_factory() as session:
+            ensure_admin_password(session, app_settings)
             configure_scheduler(get_scheduler_enabled(session), get_schedule_times(session))
         scheduler.start()
         yield
@@ -145,53 +290,138 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         with session_factory() as session:
             yield session
 
+    def require_session(
+        profits_check_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+        session: Session = Depends(get_session),
+    ):
+        auth_session = get_valid_session(session, profits_check_session)
+        if auth_session is None:
+            raise HTTPException(
+                status_code=HTTPStatus.UNAUTHORIZED, detail="Authentication required"
+            )
+        return auth_session
+
+    def set_session_cookie(response: Response, token: str) -> None:
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=app_settings.cookie_secure,
+            samesite="lax",
+            max_age=app_settings.session_ttl_days * 24 * 60 * 60,
+            path="/",
+        )
+
+    def clear_session_cookie(response: Response) -> None:
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/", httponly=True, samesite="lax")
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/api/auth/login")
+    def login(payload: LoginPayload, response: Response, session: Session = Depends(get_session)):
+        password_setting = session.get(AppSetting, PASSWORD_SETTING_KEY)
+        if password_setting is None:
+            ensure_admin_password(session, app_settings)
+            password_setting = session.get(AppSetting, PASSWORD_SETTING_KEY)
+        if password_setting is None or not verify_password(
+            payload.password, json.loads(password_setting.value_json)
+        ):
+            raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid password")
+        token, _ = create_session(session, ttl_days=app_settings.session_ttl_days)
+        set_session_cookie(response, token)
+        return {"authenticated": True}
+
+    @app.post("/api/auth/logout")
+    def logout(
+        response: Response,
+        profits_check_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+        session: Session = Depends(get_session),
+    ):
+        revoke_session(session, profits_check_session)
+        clear_session_cookie(response)
+        return {"authenticated": False}
+
+    @app.get("/api/auth/session")
+    def auth_session(
+        profits_check_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+        session: Session = Depends(get_session),
+    ):
+        return {"authenticated": get_valid_session(session, profits_check_session) is not None}
+
+    @app.put("/api/auth/password")
+    def change_password(
+        payload: ChangePasswordPayload,
+        response: Response,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        password_setting = session.get(AppSetting, PASSWORD_SETTING_KEY)
+        if password_setting is None or not verify_password(
+            payload.current_password,
+            json.loads(password_setting.value_json),
+        ):
+            raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid password")
+        password_setting.value_json = json.dumps(hash_password(payload.new_password))
+        session.commit()
+        revoke_all_sessions(session)
+        clear_session_cookie(response)
+        return {"authenticated": False}
+
     @app.get("/api/channels")
-    def get_channels(session: Session = Depends(get_session)):
+    def get_channels(_: object = Depends(require_session), session: Session = Depends(get_session)):
         return [channel_payload(channel, cipher) for channel in list_channels(session)]
 
     @app.post("/api/channels", status_code=201)
-    def post_channel(payload: dict[str, Any], session: Session = Depends(get_session)):
-        provider = str(payload.get("provider") or payload.get("provider_type") or "")
-        public_config = payload.get("publicConfig") or payload.get("config") or {}
-        secret_config = payload.get("secretConfig") or payload.get("secrets") or {}
+    def post_channel(
+        payload: ChannelPayload,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        public_config = payload.merged_public_config()
+        secret_config = payload.merged_secret_config()
         channel = create_channel(
             session,
             cipher=cipher,
-            name=payload["name"],
-            provider=provider,
-            kind=payload.get("kind", "cex"),
-            enabled=payload.get("enabled", True),
+            name=payload.name,
+            provider=payload.provider_value(),
+            kind=payload.kind,
+            enabled=payload.enabled,
             public_config=public_config,
-            secret_config=secret_config,
+            secret_config=dict(secret_config),
         )
         return channel_payload(channel, cipher)
 
     @app.put("/api/channels/{channel_id}")
-    def put_channel(channel_id: int, payload: dict[str, Any], session: Session = Depends(get_session)):
+    def put_channel(
+        channel_id: int,
+        payload: ChannelUpdatePayload,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
         channel = session.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="Channel not found")
 
-        if "name" in payload:
-            channel.name = payload["name"]
-        if "provider" in payload or "provider_type" in payload:
-            channel.provider = str(payload.get("provider") or payload.get("provider_type") or channel.provider)
-        if "kind" in payload:
-            channel.kind = payload["kind"]
-        if "enabled" in payload:
-            channel.enabled = payload["enabled"]
+        if payload.name is not None:
+            channel.name = payload.name
+        if payload.provider is not None or payload.provider_type is not None:
+            channel.provider = str(payload.provider or payload.provider_type or channel.provider)
+        if payload.kind is not None:
+            channel.kind = payload.kind
+        if payload.enabled is not None:
+            channel.enabled = payload.enabled
 
-        public_config = payload.get("publicConfig") or payload.get("config")
+        public_config = payload.merged_public_config()
         if public_config is not None:
             channel.public_config_json = json.dumps(public_config)
 
-        secret_config = payload.get("secretConfig") or payload.get("secrets")
+        secret_config = payload.merged_secret_config()
         if secret_config is not None and secret_config:
-            new_secrets = {key: cipher.encrypt(str(value)) for key, value in secret_config.items() if value}
+            new_secrets = {
+                key: cipher.encrypt(str(value)) for key, value in secret_config.items() if value
+            }
             if new_secrets:
                 try:
                     existing = json.loads(channel.secret_config_encrypted or "{}")
@@ -205,7 +435,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         return channel_payload(channel, cipher)
 
     @app.post("/api/channels/{channel_id}/test")
-    def test_channel(channel_id: int, session: Session = Depends(get_session)):
+    def test_channel(
+        channel_id: int,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
         channel = session.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -219,13 +453,17 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             config=decode_public_config(channel),
             secrets=secrets,
         )
+        if not app.state.channel_test_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Channel test is already running")
         try:
             snapshot = asyncio.run(provider.collect_snapshot())
         except Exception as exc:
             channel.last_test_status = "failed"
             channel.last_test_error = str(exc)
             session.commit()
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail="Channel test failed") from exc
+        finally:
+            app.state.channel_test_lock.release()
 
         channel.last_test_status = "ok"
         channel.last_test_error = None
@@ -237,7 +475,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         }
 
     @app.delete("/api/channels/{channel_id}", status_code=204)
-    def delete_channel(channel_id: int, session: Session = Depends(get_session)):
+    def delete_channel(
+        channel_id: int,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
         channel = session.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -245,61 +487,88 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         session.commit()
 
     @app.post("/api/channels/{channel_id}/snapshots", status_code=201)
-    def snapshot_channel(channel_id: int, session: Session = Depends(get_session)):
+    def snapshot_channel(
+        channel_id: int,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
         channel = session.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="Channel not found")
-        result = asyncio.run(
-            execute_snapshot_run(
-                session=session,
-                channels=[channel],
-                cipher=cipher,
-                provider_builder=app.state.provider_builder,
+        if not app.state.snapshot_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Snapshot run is already running")
+        try:
+            result = asyncio.run(
+                execute_snapshot_run(
+                    session=session,
+                    channels=[channel],
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
             )
-        )
+        finally:
+            app.state.snapshot_lock.release()
         detail = snapshot_detail(session, result["id"])
         if detail is None:
             raise HTTPException(status_code=500, detail="Snapshot was not persisted")
         return detail
 
     @app.get("/api/summary")
-    def summary_legacy(session: Session = Depends(get_session)):
+    def summary_legacy(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         return get_latest_summary(session)
 
     @app.get("/api/summary/latest")
-    def summary_latest(session: Session = Depends(get_session)):
+    def summary_latest(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         return get_latest_summary(session)
 
     @app.get("/api/summary/live")
-    def summary_live(session: Session = Depends(get_session)):
+    def summary_live(_: object = Depends(require_session), session: Session = Depends(get_session)):
         channels = list(
-            session.scalars(
-                select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
-            )
+            session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
         )
-        return asyncio.run(
-            collect_live_summary(
-                channels=channels,
-                cipher=cipher,
-                provider_builder=app.state.provider_builder,
-                session=session,
+        if not app.state.live_summary_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Live summary is already running")
+        try:
+            return asyncio.run(
+                collect_live_summary(
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                    session=session,
+                )
             )
-        )
+        finally:
+            app.state.live_summary_lock.release()
 
     @app.post("/api/snapshots/run")
-    def run_snapshots(session: Session = Depends(get_session)):
-        channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)))
-        return asyncio.run(
-            execute_snapshot_run(
-                session=session,
-                channels=channels,
-                cipher=cipher,
-                provider_builder=app.state.provider_builder,
-            )
+    def run_snapshots(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        channels = list(
+            session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
         )
+        if not app.state.snapshot_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Snapshot run is already running")
+        try:
+            return asyncio.run(
+                execute_snapshot_run(
+                    session=session,
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
+            )
+        finally:
+            app.state.snapshot_lock.release()
 
     @app.get("/api/snapshots")
-    def get_snapshots(session: Session = Depends(get_session)):
+    def get_snapshots(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         snapshots = list(session.scalars(select(Snapshot).order_by(Snapshot.id)))
         return [
             {
@@ -307,30 +576,40 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 "runId": snapshot.run_id or snapshot.id,
                 "channelId": snapshot.channel_id,
                 "status": snapshot.status,
-                "totalValueUsd": str(snapshot.total_value_usd.quantize(__import__("decimal").Decimal("0.00000001"))),
+                "totalValueUsd": str(
+                    snapshot.total_value_usd.quantize(__import__("decimal").Decimal("0.00000001"))
+                ),
                 "createdAt": snapshot.created_at.replace(tzinfo=UTC).isoformat(),
             }
             for snapshot in snapshots
         ]
 
     @app.get("/api/snapshots/series")
-    def get_snapshot_series(session: Session = Depends(get_session)):
+    def get_snapshot_series(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         return list_snapshot_runs(session)
 
     @app.delete("/api/snapshots/runs/{run_id}", status_code=204)
-    def delete_snapshot_series_run(run_id: int, session: Session = Depends(get_session)):
+    def delete_snapshot_series_run(
+        run_id: int, _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         if not delete_snapshot_run(session, run_id):
             raise HTTPException(status_code=404, detail="Snapshot run not found")
 
     @app.get("/api/snapshots/{snapshot_id}")
-    def get_snapshot(snapshot_id: int, session: Session = Depends(get_session)):
+    def get_snapshot(
+        snapshot_id: int,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
         detail = snapshot_detail(session, snapshot_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Snapshot not found")
         return detail
 
     @app.get("/api/schedule")
-    def get_schedule(session: Session = Depends(get_session)):
+    def get_schedule(_: object = Depends(require_session), session: Session = Depends(get_session)):
         times = get_schedule_times(session)
         okx_dex_setting = get_or_create_setting(session, "okxDexConfig", "{}")
         okx_dex_config = json.loads(okx_dex_setting.value_json)
@@ -341,14 +620,18 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         }
 
     @app.put("/api/schedule")
-    def put_schedule(payload: dict, session: Session = Depends(get_session)):
+    def put_schedule(
+        payload: dict, _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         times = str(payload.get("snapshotScheduleTimes", app_settings.snapshot_schedule_times))
         try:
             for time_value in [item.strip() for item in times.split(",") if item.strip()]:
                 parse_schedule_time(time_value)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        get_or_create_setting(session, "snapshotScheduleTimes", json.dumps(app_settings.snapshot_schedule_times)).value_json = json.dumps(times)
+        get_or_create_setting(
+            session, "snapshotScheduleTimes", json.dumps(app_settings.snapshot_schedule_times)
+        ).value_json = json.dumps(times)
 
         okx_dex_api_key = str(payload.get("okxDexApiKey", ""))
         okx_dex_api_secret = str(payload.get("okxDexApiSecret", ""))
@@ -368,10 +651,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
         session.commit()
         configure_scheduler(get_scheduler_enabled(session), times)
-        return get_schedule(session)
+        return get_schedule(object(), session)
 
     @app.get("/api/system/scheduler")
-    def get_scheduler_status(session: Session = Depends(get_session)):
+    def get_scheduler_status(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         enabled = get_scheduler_enabled(session)
         schedule_times = get_schedule_times(session)
         return {
@@ -382,7 +667,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         }
 
     @app.put("/api/system/scheduler")
-    def put_scheduler_status(payload: dict, session: Session = Depends(get_session)):
+    def put_scheduler_status(
+        payload: dict, _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         enabled = bool(payload.get("enabled", True))
         get_or_create_setting(
             session,
@@ -391,6 +678,6 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         ).value_json = json.dumps(enabled)
         session.commit()
         configure_scheduler(enabled, get_schedule_times(session))
-        return get_scheduler_status(session)
+        return get_scheduler_status(object(), session)
 
     return app

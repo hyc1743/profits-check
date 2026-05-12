@@ -11,16 +11,30 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def backend_env(tmp_path: Path) -> Iterator[None]:
-    os.environ["APP_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(b"0123456789ABCDEF0123456789ABCDEF").decode()
+    os.environ["APP_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(
+        b"0123456789ABCDEF0123456789ABCDEF"
+    ).decode()
+    os.environ["PROFITS_CHECK_BOOTSTRAP_PASSWORD"] = "correct horse battery staple"
     os.environ["DATABASE_URL"] = f"sqlite:///{tmp_path / 'test.db'}"
     yield
     os.environ.pop("APP_ENCRYPTION_KEY", None)
+    os.environ.pop("PROFITS_CHECK_BOOTSTRAP_PASSWORD", None)
     os.environ.pop("DATABASE_URL", None)
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def anonymous_client() -> Iterator[TestClient]:
     from app.main import create_app
 
     with TestClient(create_app()) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client(anonymous_client: TestClient) -> TestClient:
+    response = anonymous_client.post(
+        "/api/auth/login",
+        json={"password": "correct horse battery staple"},
+    )
+    assert response.status_code == 200
+    return anonymous_client

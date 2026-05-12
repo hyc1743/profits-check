@@ -5,7 +5,13 @@ from typing import cast
 
 import httpx
 
-from profits_check_backend.providers.base import AssetBalance, Provider, ProviderError, ProviderSnapshot
+from profits_check_backend.providers.base import (
+    AssetBalance,
+    Provider,
+    ProviderError,
+    ProviderSnapshot,
+)
+from profits_check_backend.providers.http import provider_http_client
 
 
 class AsterProvider(Provider):
@@ -21,7 +27,9 @@ class AsterProvider(Provider):
         self.secrets = secrets
 
     async def collect_snapshot(self) -> ProviderSnapshot:
-        rpc_url = str(self.config.get("rpcUrl", self.config.get("rpc_url", "https://tapi.asterdex.com/info")))
+        rpc_url = str(
+            self.config.get("rpcUrl", self.config.get("rpc_url", "https://tapi.asterdex.com/info"))
+        )
         wallet_address = str(
             self.config.get("walletAddress", self.config.get("wallet_address", ""))
         )
@@ -31,7 +39,7 @@ class AsterProvider(Provider):
         if not wallet_address:
             raise ProviderError("Aster wallet address is required")
 
-        async with httpx.AsyncClient() as client:
+        async with provider_http_client() as client:
             resp = await client.post(
                 rpc_url,
                 json={
@@ -111,8 +119,12 @@ class AsterProvider(Provider):
         if asset in {"USDT", "USDC", "USD"}:
             return quantity
         try:
-            fapi_base = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip("/")
-            resp = await client.get(f"{fapi_base}/fapi/v3/ticker/price", params={"symbol": f"{asset}USDT"})
+            fapi_base = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip(
+                "/"
+            )
+            resp = await client.get(
+                f"{fapi_base}/fapi/v3/ticker/price", params={"symbol": f"{asset}USDT"}
+            )
             resp.raise_for_status()
             payload = resp.json()
             price = payload.get("price") if isinstance(payload, dict) else None

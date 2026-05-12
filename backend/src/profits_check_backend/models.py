@@ -34,7 +34,9 @@ class Channel(Base):
         onupdate=utc_now,
     )
 
-    snapshots: Mapped[list[Snapshot]] = relationship(back_populates="channel", cascade="all, delete-orphan")
+    snapshots: Mapped[list[Snapshot]] = relationship(
+        back_populates="channel", cascade="all, delete-orphan"
+    )
 
 
 class Snapshot(Base):
@@ -48,7 +50,9 @@ class Snapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     channel: Mapped[Channel] = relationship(back_populates="snapshots")
-    assets: Mapped[list[SnapshotAsset]] = relationship(back_populates="snapshot", cascade="all, delete-orphan")
+    assets: Mapped[list[SnapshotAsset]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan"
+    )
 
 
 class SnapshotAsset(Base):
@@ -75,3 +79,11 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(120), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
