@@ -449,7 +449,7 @@ async def test_bybit_provider_collects_contract_position_risk(httpx_mock) -> Non
 
     httpx_mock.add_response(
         method="GET",
-        url="https://api.bybit.com/v5/position/list?category=linear",
+        url="https://api.bybit.com/v5/position/list?category=linear&settleCoin=USDT",
         json={
             "retCode": 0,
             "result": {

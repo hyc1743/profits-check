@@ -95,7 +95,12 @@ class BybitProvider(Provider):
         base_url = str(
             self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))
         ).rstrip("/")
-        params = {"category": "linear"}
+        category = str(self.config.get("positionCategory", self.config.get("category", "linear")))
+        params = {"category": category}
+        if category == "linear":
+            params["settleCoin"] = str(
+                self.config.get("settleCoin", self.config.get("settle_coin", "USDT"))
+            ).upper()
         query_string = urlencode(params)
         headers = self._signature_headers(query_string)
         async with provider_http_client() as client:
