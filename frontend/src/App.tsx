@@ -57,8 +57,10 @@ type ScheduleFormInput = z.input<typeof scheduleSchema>
 type ScheduleFormValues = z.output<typeof scheduleSchema>
 
 const liquidationMonitorSchema = z.object({
-  monitorEnabled: z.boolean(),
-  thresholdPercent: z.string().regex(/^[1-9]\d*$/, '提醒阈值必须是正整数。'),
+  positionMonitorEnabled: z.boolean(),
+  positionThresholdPercent: z.string().regex(/^[1-9]\d*$/, '仓位风险阈值必须是正整数。'),
+  marginBalanceMonitorEnabled: z.boolean(),
+  marginBalanceThresholdPercent: z.string().regex(/^[1-9]\d*$/, '保证金余额阈值必须是正整数。'),
   checkIntervalSeconds: z.coerce.number().int().positive('监控频率必须是正整数秒。'),
   alertIntervalSeconds: z.coerce.number().int().positive('提醒频率必须是正整数秒。'),
   miaoCode: z.string().optional(),
@@ -142,6 +144,18 @@ function humanizeRiskStatus(value: string | null | undefined) {
   if (value === 'unavailable') return '无爆仓风险'
   if (value === 'ok') return '正常'
   return value || '未检测'
+}
+
+function humanizeRiskProvider(value: string) {
+  const names: Record<string, string> = {
+    binance: 'Binance',
+    gate: 'Gate',
+    okx: 'OKX',
+    bitget: 'Bitget',
+    bybit: 'Bybit',
+    aster: 'Aster',
+  }
+  return names[value.toLowerCase()] ?? humanizeProvider(value)
 }
 
 function humanizeAlertStatus(value: string | null | undefined) {
@@ -1268,6 +1282,8 @@ function LiquidationRiskPanel({
   onRefresh: () => void
 }) {
   const positions = monitor?.positions ?? []
+  const marginBalances = monitor?.marginBalances ?? []
+  const [activeView, setActiveView] = useState<'position' | 'margin'>('position')
 
   return (
     <div className="liquidation-block">
@@ -1279,35 +1295,71 @@ function LiquidationRiskPanel({
             : '监控未开启'}
         </span>
       </div>
-      <div className="risk-list" aria-label="爆仓风险仓位">
-        {positions.length > 0 ? (
-          positions.map((position) => (
-            <div key={position.id} className={`risk-row risk-status-${position.status}`}>
-              <div className="risk-main">
-                <strong>{`${position.channelName} · ${position.symbol}`}</strong>
-                <span>{`${position.side} · ${humanizeRiskStatus(position.status)}`}</span>
-              </div>
-              <div className="risk-metric">
-                <span>距离</span>
-                <strong>{formatLiquidationRiskPercent(position.distancePercent)}</strong>
-              </div>
-              <div className="risk-metric">
-                <span>标记价</span>
-                <strong>{formatUsd(position.markPrice)}</strong>
-              </div>
-              <div className="risk-metric">
-                <span>清算价</span>
-                <strong>{formatLiquidationPrice(position.liquidationPrice)}</strong>
-              </div>
-              <div className="risk-alert">
-                {humanizeAlertStatus(position.lastAlertStatus)}
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="empty-copy">无合约仓位风险</p>
-        )}
+      <div className="risk-tabs" role="tablist" aria-label="爆仓风险视图">
+        <button type="button" className={activeView === 'position' ? 'active' : ''} onClick={() => setActiveView('position')}>仓位风险</button>
+        <button type="button" className={activeView === 'margin' ? 'active' : ''} onClick={() => setActiveView('margin')}>保证金余额</button>
       </div>
+      {activeView === 'position' ? (
+        <div className="risk-list" aria-label="爆仓风险仓位">
+          {positions.length > 0 ? (
+            positions.map((position) => (
+              <div key={position.id} className={`risk-row risk-status-${position.status}`}>
+                <div className="risk-main">
+                  <strong>{`${position.channelName} · ${position.symbol}`}</strong>
+                  <span>{`${position.side} · ${humanizeRiskStatus(position.status)}`}</span>
+                </div>
+                <div className="risk-metric">
+                  <span>距离</span>
+                  <strong>{formatLiquidationRiskPercent(position.distancePercent)}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>标记价</span>
+                  <strong>{formatUsd(position.markPrice)}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>清算价</span>
+                  <strong>{formatLiquidationPrice(position.liquidationPrice)}</strong>
+                </div>
+                <div className="risk-alert">
+                  {humanizeAlertStatus(position.lastAlertStatus)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="empty-copy">无合约仓位风险</p>
+          )}
+        </div>
+      ) : (
+        <div className="risk-list" aria-label="爆仓风险保证金余额">
+          {marginBalances.length > 0 ? (
+            marginBalances.map((item) => (
+              <div key={item.id} className={`risk-row risk-status-${item.status}`}>
+                <div className="risk-main">
+                  <strong>{`${item.channelName} · ${humanizeRiskProvider(item.provider)}`}</strong>
+                  <span>{humanizeRiskStatus(item.status)}</span>
+                </div>
+                <div className="risk-metric">
+                  <span>风险比率</span>
+                  <strong>{formatPercent(item.riskPercent)}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>钱包余额</span>
+                  <strong>{formatUsd(item.walletBalance)}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>保证金余额</span>
+                  <strong>{formatUsd(item.marginBalance)}</strong>
+                </div>
+                <div className="risk-alert">
+                  {humanizeAlertStatus(item.lastAlertStatus)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="empty-copy">无保证金余额风险</p>
+          )}
+        </div>
+      )}
       <button
         type="button"
         className="button button-secondary"
@@ -1639,8 +1691,10 @@ function LiquidationMonitorForm({
   const form = useForm<LiquidationMonitorFormInput, undefined, LiquidationMonitorFormValues>({
     resolver: zodResolver(liquidationMonitorSchema),
     defaultValues: {
-      monitorEnabled: config?.monitorEnabled ?? false,
-      thresholdPercent: config?.thresholdPercent ?? '5',
+      positionMonitorEnabled: config?.positionMonitorEnabled ?? config?.monitorEnabled ?? false,
+      positionThresholdPercent: config?.positionThresholdPercent ?? config?.thresholdPercent ?? '5',
+      marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
+      marginBalanceThresholdPercent: config?.marginBalanceThresholdPercent ?? '70',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
@@ -1650,8 +1704,10 @@ function LiquidationMonitorForm({
 
   useEffect(() => {
     reset({
-      monitorEnabled: config?.monitorEnabled ?? false,
-      thresholdPercent: config?.thresholdPercent ?? '5',
+      positionMonitorEnabled: config?.positionMonitorEnabled ?? config?.monitorEnabled ?? false,
+      positionThresholdPercent: config?.positionThresholdPercent ?? config?.thresholdPercent ?? '5',
+      marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
+      marginBalanceThresholdPercent: config?.marginBalanceThresholdPercent ?? '70',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
@@ -1664,8 +1720,11 @@ function LiquidationMonitorForm({
       onSubmit={handleSubmit((values) => {
         const miaoCode = values.miaoCode?.trim()
         onSubmit({
-          monitorEnabled: values.monitorEnabled,
-          thresholdPercent: values.thresholdPercent,
+          monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled,
+          positionMonitorEnabled: values.positionMonitorEnabled,
+          positionThresholdPercent: values.positionThresholdPercent,
+          marginBalanceMonitorEnabled: values.marginBalanceMonitorEnabled,
+          marginBalanceThresholdPercent: values.marginBalanceThresholdPercent,
           checkIntervalSeconds: values.checkIntervalSeconds,
           alertIntervalSeconds: values.alertIntervalSeconds,
           ...(miaoCode ? { miaoCode } : {}),
@@ -1674,12 +1733,19 @@ function LiquidationMonitorForm({
     >
       <div className="toggle-row">
         <label className="toggle-label">
-          <input type="checkbox" {...register('monitorEnabled')} />
-          开启监控及电话提醒
+          <input type="checkbox" {...register('positionMonitorEnabled')} />
+          开启仓位风险监控
+        </label>
+        <label className="toggle-label">
+          <input type="checkbox" {...register('marginBalanceMonitorEnabled')} />
+          开启保证金余额监控
         </label>
       </div>
-      <Field label="提醒阈值" error={errors.thresholdPercent?.message}>
-        <input type="number" step="1" min="1" {...register('thresholdPercent')} />
+      <Field label="仓位风险阈值" error={errors.positionThresholdPercent?.message}>
+        <input type="number" step="1" min="1" {...register('positionThresholdPercent')} />
+      </Field>
+      <Field label="保证金余额阈值" error={errors.marginBalanceThresholdPercent?.message}>
+        <input type="number" step="1" min="1" {...register('marginBalanceThresholdPercent')} />
       </Field>
       <Field label="监控频率" error={errors.checkIntervalSeconds?.message}>
         <input type="number" step="1" min="1" {...register('checkIntervalSeconds', { valueAsNumber: true })} />

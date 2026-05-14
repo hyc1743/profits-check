@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from profits_check_backend.models import Channel, LiquidationPosition
-from profits_check_backend.providers.base import ContractPositionRisk
+from profits_check_backend.providers.base import ContractMarginBalanceRisk, ContractPositionRisk
 from profits_check_backend.providers.http import provider_http_client
 from profits_check_backend.security import SecretCipher
 from profits_check_backend.services.channels import (
@@ -29,17 +29,30 @@ MONITORED_PROVIDERS = {"binance", "gate", "okx", "bitget", "bybit", "aster"}
 class LiquidationMonitorConfig:
     monitor_enabled: bool = False
     alert_enabled: bool = False
-    threshold_percent: Decimal = Decimal("5")
+    position_monitor_enabled: bool = False
+    position_threshold_percent: Decimal = Decimal("5")
+    margin_balance_monitor_enabled: bool = False
+    margin_balance_threshold_percent: Decimal = Decimal("70")
     check_interval_seconds: int = 60
     alert_interval_seconds: int = 900
     miao_code: str = ""
+
+    @property
+    def threshold_percent(self) -> Decimal:
+        return self.position_threshold_percent
 
 
 def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, object]:
     return {
         "monitorEnabled": config.monitor_enabled,
         "alertEnabled": config.alert_enabled,
-        "thresholdPercent": quantize_decimal(config.threshold_percent),
+        "thresholdPercent": quantize_decimal(config.position_threshold_percent),
+        "positionMonitorEnabled": config.position_monitor_enabled,
+        "positionThresholdPercent": quantize_decimal(config.position_threshold_percent),
+        "marginBalanceMonitorEnabled": config.margin_balance_monitor_enabled,
+        "marginBalanceThresholdPercent": quantize_decimal(
+            config.margin_balance_threshold_percent
+        ),
         "checkIntervalSeconds": config.check_interval_seconds,
         "alertIntervalSeconds": config.alert_interval_seconds,
         "miaoCodeConfigured": bool(config.miao_code),
@@ -54,10 +67,27 @@ def load_liquidation_monitor_config(
     miao_code = ""
     if payload.get("miaoCodeEncrypted"):
         miao_code = cipher.decrypt(str(payload["miaoCodeEncrypted"]))
+    legacy_monitor_enabled = bool(payload.get("monitorEnabled", False))
+    position_monitor_enabled = bool(
+        payload.get("positionMonitorEnabled", legacy_monitor_enabled)
+    )
+    margin_balance_monitor_enabled = bool(payload.get("marginBalanceMonitorEnabled", False))
     return LiquidationMonitorConfig(
-        monitor_enabled=bool(payload.get("monitorEnabled", False)),
-        alert_enabled=bool(payload.get("alertEnabled", payload.get("monitorEnabled", False))),
-        threshold_percent=Decimal(str(payload.get("thresholdPercent", "5"))),
+        monitor_enabled=bool(
+            payload.get(
+                "monitorEnabled",
+                position_monitor_enabled or margin_balance_monitor_enabled,
+            )
+        ),
+        alert_enabled=bool(payload.get("alertEnabled", legacy_monitor_enabled)),
+        position_monitor_enabled=position_monitor_enabled,
+        position_threshold_percent=Decimal(
+            str(payload.get("positionThresholdPercent", payload.get("thresholdPercent", "5")))
+        ),
+        margin_balance_monitor_enabled=margin_balance_monitor_enabled,
+        margin_balance_threshold_percent=Decimal(
+            str(payload.get("marginBalanceThresholdPercent", "70"))
+        ),
         check_interval_seconds=int(payload.get("checkIntervalSeconds", 60)),
         alert_interval_seconds=int(payload.get("alertIntervalSeconds", 900)),
         miao_code=miao_code,
@@ -69,18 +99,34 @@ def save_liquidation_monitor_config(
     cipher: SecretCipher,
     *,
     monitor_enabled: bool,
-    threshold_percent: Decimal,
+    threshold_percent: Decimal | None = None,
+    position_monitor_enabled: bool | None = None,
+    position_threshold_percent: Decimal | None = None,
+    margin_balance_monitor_enabled: bool | None = None,
+    margin_balance_threshold_percent: Decimal | None = None,
     check_interval_seconds: int,
     alert_interval_seconds: int,
     miao_code: str | None,
 ) -> LiquidationMonitorConfig:
+    if position_monitor_enabled is None:
+        position_monitor_enabled = monitor_enabled
+    if margin_balance_monitor_enabled is None:
+        margin_balance_monitor_enabled = False
+    if position_threshold_percent is None:
+        position_threshold_percent = threshold_percent or Decimal("5")
+    if margin_balance_threshold_percent is None:
+        margin_balance_threshold_percent = Decimal("70")
     if check_interval_seconds <= 0:
         raise ValueError("Liquidation monitor frequency must be greater than 0")
     if alert_interval_seconds <= 0:
         raise ValueError("Liquidation alert frequency must be greater than 0")
-    if threshold_percent <= 0:
+    if position_threshold_percent <= 0 or margin_balance_threshold_percent <= 0:
         raise ValueError("Liquidation threshold must be greater than 0")
-    if threshold_percent != threshold_percent.to_integral_value():
+    if (
+        position_threshold_percent != position_threshold_percent.to_integral_value()
+        or margin_balance_threshold_percent
+        != margin_balance_threshold_percent.to_integral_value()
+    ):
         raise ValueError("Liquidation threshold must be an integer")
 
     setting = get_or_create_setting(session, LIQUIDATION_MONITOR_SETTING_KEY, "{}")
@@ -89,7 +135,11 @@ def save_liquidation_monitor_config(
         {
             "monitorEnabled": monitor_enabled,
             "alertEnabled": monitor_enabled,
-            "thresholdPercent": str(threshold_percent),
+            "positionMonitorEnabled": position_monitor_enabled,
+            "positionThresholdPercent": str(position_threshold_percent),
+            "marginBalanceMonitorEnabled": margin_balance_monitor_enabled,
+            "marginBalanceThresholdPercent": str(margin_balance_threshold_percent),
+            "thresholdPercent": str(position_threshold_percent),
             "checkIntervalSeconds": check_interval_seconds,
             "alertIntervalSeconds": alert_interval_seconds,
         }
@@ -115,6 +165,7 @@ async def run_liquidation_monitor(
     config = load_liquidation_monitor_config(session, cipher)
     now = now or datetime.now(UTC)
     positions: list[LiquidationPosition] = []
+    margin_balances: list[dict[str, object]] = []
     alert_count = 0
     failure_count = 0
 
@@ -135,6 +186,10 @@ async def run_liquidation_monitor(
                 secrets=decode_secret_config(channel, cipher),
             )
             provider_positions = await provider.collect_contract_positions()
+            collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
+            provider_margin_balance = (
+                await collect_margin_balance() if collect_margin_balance is not None else None
+            )
         except Exception:
             failure_count += 1
             continue
@@ -144,7 +199,7 @@ async def run_liquidation_monitor(
                 session=session,
                 channel=channel,
                 risk=provider_position,
-                threshold_percent=config.threshold_percent,
+                threshold_percent=config.position_threshold_percent,
                 existing=existing,
                 now=now,
             )
@@ -170,6 +225,33 @@ async def run_liquidation_monitor(
                     model.last_alert_at = None
             positions.append(model)
 
+        if provider_margin_balance is not None:
+            margin_payload = margin_balance_payload(
+                channel=channel,
+                risk=provider_margin_balance,
+                threshold_percent=config.margin_balance_threshold_percent,
+            )
+            if (
+                config.margin_balance_monitor_enabled
+                and config.alert_enabled
+                and config.miao_code
+                and margin_payload["status"] == "warning"
+            ):
+                alert_result = await send_miaotixing_alert(
+                    config.miao_code,
+                    margin_balance_alert_text(channel, provider_margin_balance),
+                )
+                margin_payload["lastAlertStatus"] = alert_result["status"]
+                margin_payload["lastAlertError"] = alert_result.get("error")
+                margin_payload["lastAlertAt"] = (
+                    now.replace(tzinfo=UTC).isoformat()
+                    if alert_result["status"] == "sent"
+                    else None
+                )
+                if alert_result["status"] == "sent":
+                    alert_count += 1
+            margin_balances.append(margin_payload)
+
     for key, item in existing.items():
         if key not in seen_keys:
             session.delete(item)
@@ -184,6 +266,7 @@ async def run_liquidation_monitor(
         "failureCount": failure_count,
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
+        "marginBalances": margin_balances,
     }
 
 
@@ -260,6 +343,35 @@ def alert_text(position: LiquidationPosition) -> str:
     )
 
 
+def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk) -> str:
+    return (
+        f"{channel.name} margin balance risk. Wallet {risk.wallet_balance}, "
+        f"margin balance {risk.margin_balance}, ratio {quantize_decimal(risk.risk_percent)}%."
+    )
+
+
+def margin_balance_payload(
+    *, channel: Channel, risk: ContractMarginBalanceRisk, threshold_percent: Decimal
+) -> dict[str, object]:
+    risk_percent = risk.risk_percent
+    status = "unavailable" if risk_percent is None else "warning" if risk_percent < threshold_percent else "ok"
+    return {
+        "id": f"{channel.id}:margin-balance",
+        "channelId": channel.id,
+        "provider": channel.provider,
+        "channelName": channel.name,
+        "walletBalance": quantize_decimal(risk.wallet_balance),
+        "marginBalance": quantize_decimal(risk.margin_balance),
+        "unrealizedPnl": quantize_decimal(risk.unrealized_pnl),
+        "riskPercent": quantize_decimal(risk_percent),
+        "thresholdPercent": quantize_decimal(threshold_percent),
+        "status": status,
+        "lastAlertStatus": None,
+        "lastAlertError": None,
+        "lastAlertAt": None,
+    }
+
+
 async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:
     async with provider_http_client() as client:
         response = await client.post(
@@ -309,6 +421,7 @@ def get_liquidation_monitor_payload(session: Session, cipher: SecretCipher) -> d
     return {
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
+        "marginBalances": [],
     }
 
 

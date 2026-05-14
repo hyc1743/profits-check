@@ -182,11 +182,37 @@ class ChannelUpdatePayload(BaseModel):
 class LiquidationMonitorPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    monitor_enabled: bool = Field(alias="monitorEnabled")
-    threshold_percent: Decimal = Field(alias="thresholdPercent", gt=0)
+    monitor_enabled: bool | None = Field(default=None, alias="monitorEnabled")
+    threshold_percent: Decimal | None = Field(default=None, alias="thresholdPercent", gt=0)
+    position_monitor_enabled: bool | None = Field(default=None, alias="positionMonitorEnabled")
+    position_threshold_percent: Decimal | None = Field(
+        default=None, alias="positionThresholdPercent", gt=0
+    )
+    margin_balance_monitor_enabled: bool | None = Field(
+        default=None, alias="marginBalanceMonitorEnabled"
+    )
+    margin_balance_threshold_percent: Decimal | None = Field(
+        default=None, alias="marginBalanceThresholdPercent", gt=0
+    )
     check_interval_seconds: int = Field(alias="checkIntervalSeconds", gt=0)
     alert_interval_seconds: int = Field(alias="alertIntervalSeconds", gt=0)
     miao_code: str | None = Field(default=None, alias="miaoCode", max_length=256)
+
+    @property
+    def resolved_position_monitor_enabled(self) -> bool:
+        if self.position_monitor_enabled is not None:
+            return self.position_monitor_enabled
+        return bool(self.monitor_enabled)
+
+    @property
+    def resolved_margin_balance_monitor_enabled(self) -> bool:
+        return bool(self.margin_balance_monitor_enabled)
+
+    @property
+    def resolved_monitor_enabled(self) -> bool:
+        if self.monitor_enabled is not None and self.position_monitor_enabled is None:
+            return self.monitor_enabled
+        return self.resolved_position_monitor_enabled or self.resolved_margin_balance_monitor_enabled
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -554,8 +580,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             config = save_liquidation_monitor_config(
                 session,
                 cipher,
-                monitor_enabled=payload.monitor_enabled,
+                monitor_enabled=payload.resolved_monitor_enabled,
                 threshold_percent=payload.threshold_percent,
+                position_monitor_enabled=payload.resolved_position_monitor_enabled,
+                position_threshold_percent=payload.position_threshold_percent,
+                margin_balance_monitor_enabled=payload.resolved_margin_balance_monitor_enabled,
+                margin_balance_threshold_percent=payload.margin_balance_threshold_percent,
                 check_interval_seconds=payload.check_interval_seconds,
                 alert_interval_seconds=payload.alert_interval_seconds,
                 miao_code=payload.miao_code,

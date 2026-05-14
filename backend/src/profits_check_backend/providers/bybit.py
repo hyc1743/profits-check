@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractMarginBalanceRisk,
     ContractPositionRisk,
     Provider,
     ProviderError,
@@ -116,6 +117,39 @@ class BybitProvider(Provider):
             for item in payload.get("result", {}).get("list", [])
             if Decimal(str(item.get("size", "0"))) != 0
         ]
+
+    async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))
+        ).rstrip("/")
+        params = {"accountType": "UNIFIED"}
+        query_string = urlencode(params)
+        headers = self._signature_headers(query_string)
+        async with provider_http_client() as client:
+            response = await client.get(
+                f"{base_url}/v5/account/wallet-balance", headers=headers, params=params
+            )
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("retCode") not in {0, "0"}:
+            raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
+        accounts = payload.get("result", {}).get("list", [])
+        if not accounts:
+            return None
+        account = accounts[0]
+        wallet_balance = Decimal(str(account.get("totalWalletBalance", "0")))
+        margin_balance = Decimal(str(account.get("totalMarginBalance", account.get("totalEquity", "0"))))
+        unrealized_pnl = Decimal(str(account.get("totalPerpUPL", "0")))
+        if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
+            return None
+        return ContractMarginBalanceRisk(
+            provider="bybit",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=margin_balance,
+            unrealized_pnl=unrealized_pnl,
+            raw_payload=dict(account),
+        )
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(

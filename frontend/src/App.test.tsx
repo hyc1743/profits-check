@@ -90,6 +90,10 @@ const liquidationMonitorPayload = {
     monitorEnabled: false,
     alertEnabled: false,
     thresholdPercent: '5.00000000',
+    positionMonitorEnabled: false,
+    positionThresholdPercent: '5.00000000',
+    marginBalanceMonitorEnabled: false,
+    marginBalanceThresholdPercent: '70.00000000',
     checkIntervalSeconds: 60,
     alertIntervalSeconds: 900,
     miaoCodeConfigured: false,
@@ -116,6 +120,23 @@ const liquidationMonitorPayload = {
       lastAlertError: null,
       lastAlertAt: '2026-05-12T07:00:00+00:00',
       updatedAt: '2026-05-12T07:00:00+00:00',
+    },
+  ],
+  marginBalances: [
+    {
+      id: '1:margin-balance',
+      channelId: 1,
+      provider: 'binance',
+      channelName: '主账户',
+      walletBalance: '1000.00000000',
+      marginBalance: '650.00000000',
+      unrealizedPnl: '-350.00000000',
+      riskPercent: '65.00000000',
+      thresholdPercent: '70.00000000',
+      status: 'warning',
+      lastAlertStatus: null,
+      lastAlertError: null,
+      lastAlertAt: null,
     },
   ],
 }
@@ -275,6 +296,22 @@ test('shows liquidation risk positions and can refresh them', async () => {
   await waitFor(() => expect(refreshCount).toBe(1))
 })
 
+test('switches liquidation risk panel to margin balance risk by channel', async () => {
+  installHandlers()
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect(await screen.findByRole('button', { name: '仓位风险' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '保证金余额' }))
+
+  expect(screen.getByLabelText('爆仓风险保证金余额')).toBeInTheDocument()
+  expect(screen.getByText('主账户 · Binance')).toBeInTheDocument()
+  expect(screen.getByText('65.0000%')).toBeInTheDocument()
+  expect(screen.getByText('1000.00 USD')).toBeInTheDocument()
+  expect(screen.getByText('650.00 USD')).toBeInTheDocument()
+})
+
 test('shows infinity and no-risk copy when liquidation price is unavailable', async () => {
   installHandlers()
   server.use(
@@ -332,10 +369,13 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '设置' }))
-  await user.click(screen.getByLabelText('开启监控及电话提醒'))
+  await user.click(screen.getByLabelText('开启仓位风险监控'))
+  await user.click(screen.getByLabelText('开启保证金余额监控'))
   expect(screen.queryByLabelText('开启电话提醒')).not.toBeInTheDocument()
-  await user.clear(screen.getByLabelText('提醒阈值'))
-  await user.type(screen.getByLabelText('提醒阈值'), '2')
+  await user.clear(screen.getByLabelText('仓位风险阈值'))
+  await user.type(screen.getByLabelText('仓位风险阈值'), '2')
+  await user.clear(screen.getByLabelText('保证金余额阈值'))
+  await user.type(screen.getByLabelText('保证金余额阈值'), '75')
   await user.clear(screen.getByLabelText('监控频率'))
   await user.type(screen.getByLabelText('监控频率'), '45')
   await user.clear(screen.getByLabelText('提醒频率'))
@@ -347,7 +387,10 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
     expect(monitorUpdates).toEqual([
       {
         monitorEnabled: true,
-        thresholdPercent: '2',
+        positionMonitorEnabled: true,
+        positionThresholdPercent: '2',
+        marginBalanceMonitorEnabled: true,
+        marginBalanceThresholdPercent: '75',
         checkIntervalSeconds: 45,
         alertIntervalSeconds: 120,
         miaoCode: 'miao-123',

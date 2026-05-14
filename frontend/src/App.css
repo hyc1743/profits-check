@@ -249,6 +249,28 @@
   gap: 0.45rem;
 }
 
+.risk-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.risk-tabs button {
+  min-height: 2.1rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border-mild);
+  border-radius: var(--radius-sm);
+  background: var(--surface-toggle);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.risk-tabs button.active {
+  color: var(--accent-strong);
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border-mild));
+  background: color-mix(in oklch, var(--paper) 84%, var(--accent) 16%);
+}
+
 .risk-row {
   display: grid;
   grid-template-columns: minmax(10rem, 1.35fr) repeat(3, minmax(6.5rem, 0.75fr)) auto;

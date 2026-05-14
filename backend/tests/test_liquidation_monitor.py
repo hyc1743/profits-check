@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from profits_check_backend.models import Channel
-from profits_check_backend.providers.base import ContractPositionRisk
+from profits_check_backend.providers.base import ContractMarginBalanceRisk, ContractPositionRisk
 from profits_check_backend.services.liquidation_monitor import run_liquidation_monitor
 
 
@@ -33,6 +33,24 @@ def position(
         leverage="20",
         updated_at_ms=1700000000001,
         raw_payload={"symbol": symbol},
+    )
+
+
+def margin_balance(
+    *,
+    provider: str = "binance",
+    channel_name: str = "Binance",
+    wallet_balance: str = "1000",
+    margin_balance_value: str = "650",
+    unrealized_pnl: str = "-350",
+) -> ContractMarginBalanceRisk:
+    return ContractMarginBalanceRisk(
+        provider=provider,
+        channel_name=channel_name,
+        wallet_balance=Decimal(wallet_balance),
+        margin_balance=Decimal(margin_balance_value),
+        unrealized_pnl=Decimal(unrealized_pnl),
+        raw_payload={"asset": "USDT"},
     )
 
 
@@ -70,6 +88,39 @@ def test_liquidation_monitor_config_round_trips(client) -> None:
     assert payload["config"]["alertIntervalSeconds"] == 120
     assert payload["config"]["miaoCodeConfigured"] is True
     assert "miaoCode" not in payload["config"]
+
+
+def test_liquidation_monitor_config_round_trips_independent_risk_controls(client) -> None:
+    initial = client.get("/api/liquidation-monitor")
+
+    assert initial.status_code == 200
+    assert initial.json()["config"]["positionMonitorEnabled"] is False
+    assert initial.json()["config"]["positionThresholdPercent"] == "5.00000000"
+    assert initial.json()["config"]["marginBalanceMonitorEnabled"] is False
+    assert initial.json()["config"]["marginBalanceThresholdPercent"] == "70.00000000"
+
+    response = client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": True,
+            "positionThresholdPercent": "2",
+            "marginBalanceMonitorEnabled": True,
+            "marginBalanceThresholdPercent": "75",
+            "checkIntervalSeconds": 45,
+            "alertIntervalSeconds": 120,
+            "miaoCode": "miao-123",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["monitorEnabled"] is True
+    assert payload["config"]["positionMonitorEnabled"] is True
+    assert payload["config"]["positionThresholdPercent"] == "2.00000000"
+    assert payload["config"]["marginBalanceMonitorEnabled"] is True
+    assert payload["config"]["marginBalanceThresholdPercent"] == "75.00000000"
+    assert payload["config"]["thresholdPercent"] == "2.00000000"
 
 
 def test_liquidation_monitor_rejects_fractional_threshold(client) -> None:
@@ -123,6 +174,63 @@ def test_manual_refresh_collects_positions_and_does_not_alert_when_alerts_disabl
     assert payload["alertCount"] == 0
     assert payload["positions"][0]["status"] == "warning"
     assert payload["positions"][0]["distancePercent"] == "0.17211704"
+
+
+def test_manual_refresh_collects_margin_balance_risk_by_channel(client) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return []
+
+        async def collect_contract_margin_balance(self):
+            return margin_balance()
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    create_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert create_response.status_code == 201
+    update_response = client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": False,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": True,
+            "marginBalanceThresholdPercent": "70",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
+        },
+    )
+    assert update_response.status_code == 200
+
+    refresh_response = client.post("/api/liquidation-monitor/refresh")
+
+    assert refresh_response.status_code == 200
+    payload = refresh_response.json()
+    assert payload["marginBalances"] == [
+        {
+            "id": "1:margin-balance",
+            "channelId": 1,
+            "provider": "binance",
+            "channelName": "Binance",
+            "walletBalance": "1000.00000000",
+            "marginBalance": "650.00000000",
+            "unrealizedPnl": "-350.00000000",
+            "riskPercent": "65.00000000",
+            "thresholdPercent": "70.00000000",
+            "status": "warning",
+            "lastAlertStatus": None,
+            "lastAlertError": None,
+            "lastAlertAt": None,
+        }
+    ]
 
 
 def test_manual_refresh_triggers_miaotixing_when_alerts_enabled(client, httpx_mock) -> None:

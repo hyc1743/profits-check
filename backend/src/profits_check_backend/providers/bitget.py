@@ -10,6 +10,7 @@ import httpx
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractMarginBalanceRisk,
     ContractPositionRisk,
     Provider,
     ProviderError,
@@ -85,6 +86,40 @@ class BitgetProvider(Provider):
             for item in payload.get("data", [])
             if Decimal(str(item.get("total", item.get("size", "0")))) != 0
         ]
+
+    async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bitget.com"))
+        ).rstrip("/")
+        path = "/api/v2/mix/account/accounts"
+        product_type = str(self.config.get("productType", "USDT-FUTURES"))
+        query = f"productType={product_type}"
+        headers = self._signature_headers("GET", path, query=query)
+        async with provider_http_client() as client:
+            response = await client.get(
+                f"{base_url}{path}", headers=headers, params={"productType": product_type}
+            )
+            response.raise_for_status()
+            payload = response.json()
+        wallet_balance = Decimal("0")
+        margin_balance = Decimal("0")
+        unrealized_pnl = Decimal("0")
+        for item in payload.get("data", []):
+            equity = Decimal(str(item.get("accountEquity", "0")))
+            unrealized = Decimal(str(item.get("unrealizedPL", "0")))
+            margin_balance += equity
+            unrealized_pnl += unrealized
+            wallet_balance += equity - unrealized
+        if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
+            return None
+        return ContractMarginBalanceRisk(
+            provider="bitget",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=margin_balance,
+            unrealized_pnl=unrealized_pnl,
+            raw_payload=dict(payload),
+        )
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(

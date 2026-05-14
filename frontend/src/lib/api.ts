@@ -82,6 +82,10 @@ export interface LiquidationMonitorConfig {
   monitorEnabled: boolean
   alertEnabled: boolean
   thresholdPercent: string
+  positionMonitorEnabled: boolean
+  positionThresholdPercent: string
+  marginBalanceMonitorEnabled: boolean
+  marginBalanceThresholdPercent: string
   checkIntervalSeconds: number
   alertIntervalSeconds: number
   miaoCodeConfigured: boolean
@@ -113,14 +117,34 @@ export interface LiquidationPositionResponse {
 export interface LiquidationMonitorResponse {
   config: LiquidationMonitorConfig
   positions: LiquidationPositionResponse[]
+  marginBalances: LiquidationMarginBalanceResponse[]
   status?: string
   alertCount?: number
   failureCount?: number
 }
 
+export interface LiquidationMarginBalanceResponse {
+  id: string
+  channelId: number
+  provider: string
+  channelName: string
+  walletBalance: string
+  marginBalance: string
+  unrealizedPnl?: string | null
+  riskPercent?: string | null
+  thresholdPercent: string
+  status: string
+  lastAlertStatus?: string | null
+  lastAlertError?: string | null
+  lastAlertAt?: string | null
+}
+
 export interface UpdateLiquidationMonitorPayload {
   monitorEnabled: boolean
-  thresholdPercent: string
+  positionMonitorEnabled: boolean
+  positionThresholdPercent: string
+  marginBalanceMonitorEnabled: boolean
+  marginBalanceThresholdPercent: string
   checkIntervalSeconds: number
   alertIntervalSeconds: number
   miaoCode?: string

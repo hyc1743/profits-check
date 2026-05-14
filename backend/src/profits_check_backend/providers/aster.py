@@ -12,6 +12,7 @@ from eth_account.messages import encode_typed_data
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractMarginBalanceRisk,
     ContractPositionRisk,
     Provider,
     ProviderError,
@@ -229,6 +230,42 @@ class AsterProvider(Provider):
             for item in payload
             if Decimal(str(item.get("positionAmt", "0"))) != 0
         ]
+
+    async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
+        rpc_url = str(
+            self.config.get("rpcUrl", self.config.get("rpc_url", "https://tapi.asterdex.com/info"))
+        )
+        wallet_address = str(
+            self.config.get("walletAddress", self.config.get("wallet_address", ""))
+        )
+        if not wallet_address:
+            addresses = cast(list[str], self.config.get("walletAddresses", []))
+            wallet_address = str(addresses[0]) if addresses else ""
+        if not wallet_address:
+            raise ProviderError("Aster wallet address is required")
+
+        async with provider_http_client() as client:
+            payload = await self._fetch_wallet_balance(client, rpc_url, wallet_address)
+            result = payload.get("result", {})
+            signed_positions = await self._collect_signed_positions(client)
+            positions = self._normalize_positions(result.get("positions", []), signed_positions)
+        wallet_balance = Decimal("0")
+        for item in result.get("perpAssets", []):
+            wallet_balance += Decimal(str(item.get("walletBalance", "0")))
+        unrealized_pnl = Decimal("0")
+        for position in positions:
+            unrealized_pnl += Decimal(position["unRealizedProfit"])
+        margin_balance = wallet_balance + unrealized_pnl
+        if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
+            return None
+        return ContractMarginBalanceRisk(
+            provider="aster",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=margin_balance,
+            unrealized_pnl=unrealized_pnl,
+            raw_payload={"perpAssets": result.get("perpAssets", []), "positions": positions},
+        )
 
     def _signed_params(self, params: dict[str, str]) -> dict[str, str]:
         user = str(self.secrets.get("user", self.secrets.get("asterUser", "")))

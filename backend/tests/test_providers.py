@@ -403,6 +403,35 @@ async def test_binance_provider_collects_contract_position_risk(httpx_mock) -> N
 
 
 @pytest.mark.asyncio
+async def test_binance_provider_collects_contract_margin_balance_risk(httpx_mock) -> None:
+    from profits_check_backend.providers.binance import BinanceProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://fapi.binance.com/fapi/v2/account?timestamp=1700000000000&signature=expected",
+        json={
+            "totalWalletBalance": "1000",
+            "totalMarginBalance": "650",
+            "totalUnrealizedProfit": "-350",
+        },
+    )
+    provider = BinanceProvider(
+        channel_name="Binance",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: 1700000000000,
+        signature_factory=lambda query, secret: "expected",
+    )
+
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk.wallet_balance == Decimal("1000")
+    assert risk.margin_balance == Decimal("650")
+    assert risk.unrealized_pnl == Decimal("-350")
+    assert risk.risk_percent == Decimal("65.00000000")
+
+
+@pytest.mark.asyncio
 async def test_okx_provider_collects_contract_position_risk(httpx_mock) -> None:
     from profits_check_backend.providers.okx import OkxProvider
 

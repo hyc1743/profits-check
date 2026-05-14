@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractMarginBalanceRisk,
     ContractPositionRisk,
     Provider,
     ProviderError,
@@ -103,6 +104,38 @@ class OkxProvider(Provider):
             if Decimal(str(item.get("pos", "0"))) != 0
         ]
 
+    async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://www.okx.com"))
+        ).rstrip("/")
+        path = "/api/v5/account/balance"
+        headers = self._signature_headers("GET", path)
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("code") not in {0, "0", None}:
+            raise ProviderError(str(payload.get("msg", "OKX request failed")))
+        data = payload.get("data", [])
+        if not data:
+            return None
+        account = data[0]
+        wallet_balance = Decimal(str(account.get("totalEq", "0")))
+        margin_balance = Decimal(str(account.get("adjEq", account.get("totalEq", "0"))))
+        unrealized_pnl = _sum_optional_decimal(
+            item.get("upl", "0") for item in account.get("details", [])
+        )
+        if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
+            return None
+        return ContractMarginBalanceRisk(
+            provider="okx",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=margin_balance,
+            unrealized_pnl=unrealized_pnl,
+            raw_payload=dict(account),
+        )
+
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(
             provider="okx",
@@ -132,3 +165,11 @@ def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
     return int(str(value))
+
+
+def _sum_optional_decimal(values) -> Decimal:
+    total = Decimal("0")
+    for value in values:
+        if value not in (None, ""):
+            total += Decimal(str(value))
+    return total

@@ -11,6 +11,7 @@ import httpx
 
 from profits_check_backend.providers.base import (
     AssetBalance,
+    ContractMarginBalanceRisk,
     ContractPositionRisk,
     Provider,
     ProviderError,
@@ -106,6 +107,48 @@ class BinanceProvider(Provider):
             for item in payload
             if Decimal(str(item.get("positionAmt", "0"))) != 0
         ]
+
+    async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
+        futures_base_url = str(
+            self.config.get(
+                "futures_base_url", self.config.get("futuresBaseUrl", "https://fapi.binance.com")
+            )
+        ).rstrip("/")
+        api_key = str(
+            self.config.get(
+                "api_key",
+                self.config.get(
+                    "apiKey", self.secrets.get("api_key", self.secrets.get("apiKey", ""))
+                ),
+            )
+        )
+        api_secret = str(self.secrets.get("api_secret", self.secrets.get("apiSecret", "")))
+        if not api_key or not api_secret:
+            raise ProviderError("Binance API credentials are incomplete")
+
+        timestamp = int(self.now_factory())
+        query = urlencode({"timestamp": timestamp})
+        signature = self.signature_factory(query, api_secret)
+        url = f"{futures_base_url}/fapi/v2/account?{query}&signature={signature}"
+        async with provider_http_client() as client:
+            response = await client.get(url, headers={"X-MBX-APIKEY": api_key})
+            response.raise_for_status()
+            payload = response.json()
+
+        wallet_balance = Decimal(str(payload.get("totalWalletBalance", "0")))
+        margin_balance = Decimal(str(payload.get("totalMarginBalance", "0")))
+        unrealized_pnl = _optional_decimal(payload.get("totalUnrealizedProfit"))
+        if wallet_balance == 0 and margin_balance == 0 and (unrealized_pnl is None or unrealized_pnl == 0):
+            return None
+        return ContractMarginBalanceRisk(
+            provider="binance",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=margin_balance,
+            unrealized_pnl=unrealized_pnl,
+            updated_at_ms=timestamp,
+            raw_payload=cast(dict[str, object], payload),
+        )
 
     def _position_from_payload(self, item: dict[str, Any]) -> ContractPositionRisk:
         return ContractPositionRisk(
