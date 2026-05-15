@@ -113,8 +113,14 @@ class GateProvider(Provider):
             payload = response.json()
         wallet_balance = Decimal(str(payload.get("total", "0")))
         unrealized_pnl = Decimal(str(payload.get("unrealised_pnl", "0")))
-        cross_margin_balance = _optional_decimal(payload.get("cross_margin_balance"))
-        margin_balance = cross_margin_balance or wallet_balance + unrealized_pnl
+        available = _decimal_or_none(payload.get("available"))
+        cross_initial_margin = _decimal_or_none(payload.get("cross_initial_margin"))
+        cross_order_margin = _decimal_or_none(payload.get("cross_order_margin")) or Decimal("0")
+        if available is not None and cross_initial_margin is not None:
+            wallet_balance = available + cross_initial_margin + cross_order_margin
+            margin_balance = available
+        else:
+            margin_balance = wallet_balance + unrealized_pnl
         if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
             return None
         return ContractMarginBalanceRisk(
@@ -246,6 +252,12 @@ def _optional_decimal(value: object) -> Decimal | None:
         return None
     parsed = Decimal(str(value))
     return None if parsed == 0 else parsed
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return Decimal(str(value))
 
 
 def _optional_int(value: object) -> int | None:

@@ -282,7 +282,41 @@ async def test_gate_provider_collects_spot_balances(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gate_provider_collects_contract_margin_balance_from_total_and_unrealized_pnl(
+async def test_gate_provider_collects_contract_margin_balance_from_available_margin_resource(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.gate import GateProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.gateio.ws/api/v4/futures/usdt/accounts",
+        json={
+            "total": "0.000000003287",
+            "available": "4512.70602",
+            "cross_initial_margin": "762.3803",
+            "cross_order_margin": "0",
+            "cross_maintenance_margin": "47.316225",
+            "unrealised_pnl": "-36.15200001",
+        },
+    )
+    provider = GateProvider(
+        channel_name="Gate",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000",
+    )
+
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk is not None
+    assert risk.wallet_balance == Decimal("5275.08632")
+    assert risk.margin_balance == Decimal("4512.70602")
+    assert risk.unrealized_pnl == Decimal("-36.15200001")
+    assert risk.risk_percent == Decimal("85.54752939")
+
+
+@pytest.mark.asyncio
+async def test_gate_provider_falls_back_to_total_when_margin_resource_is_unavailable(
     httpx_mock,
 ) -> None:
     from profits_check_backend.providers.gate import GateProvider
@@ -306,33 +340,6 @@ async def test_gate_provider_collects_contract_margin_balance_from_total_and_unr
     assert risk.margin_balance == Decimal("650")
     assert risk.unrealized_pnl == Decimal("-350")
     assert risk.risk_percent == Decimal("65.00000000")
-
-
-@pytest.mark.asyncio
-async def test_gate_provider_prefers_cross_margin_balance_for_contract_margin_risk(
-    httpx_mock,
-) -> None:
-    from profits_check_backend.providers.gate import GateProvider
-
-    httpx_mock.add_response(
-        method="GET",
-        url="https://api.gateio.ws/api/v4/futures/usdt/accounts",
-        json={"total": "1000", "unrealised_pnl": "-350", "cross_margin_balance": "720"},
-    )
-    provider = GateProvider(
-        channel_name="Gate",
-        config={},
-        secrets={"apiKey": "public", "apiSecret": "secret"},
-        now_factory=lambda: "1700000000",
-    )
-
-    risk = await provider.collect_contract_margin_balance()
-
-    assert risk is not None
-    assert risk.wallet_balance == Decimal("1000")
-    assert risk.margin_balance == Decimal("720")
-    assert risk.unrealized_pnl == Decimal("-350")
-    assert risk.risk_percent == Decimal("72.00000000")
 
 
 @pytest.mark.asyncio
