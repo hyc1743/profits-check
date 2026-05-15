@@ -555,6 +555,13 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const schedulerEnabled = schedulerQuery.data?.enabled ?? false
   const schedulerTimes = schedulerQuery.data?.snapshot_schedule_times ?? '08:00'
   const totalValue = displayData?.totalValueUsd ?? null
+  const configuredChannelCount = channelsQuery.data?.length ?? 0
+  const liveAccountCount = displayData?.accountCategoryTotals.length ?? 0
+  const riskWarningCount = [
+    ...(liquidationMonitorQuery.data?.positions ?? []),
+    ...(liquidationMonitorQuery.data?.marginBalances ?? []),
+  ].filter((item) => item.status === 'warning').length
+  const latestSnapshotTime = latestSnapshot ? formatSnapshotTime(latestSnapshot.createdAt) : '无快照'
   const channelShareTotal = (displayData?.channels ?? []).reduce(
     (total, channel) => total + Number(channel.latestSnapshotTotalUsd ?? 0),
     0,
@@ -629,19 +636,47 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   }
 
   return (
-    <main className="shell">
+    <main className="shell console-shell">
       <div className="grain" aria-hidden="true" />
-      <div className="top-bar">
-        <div />
-        <div className="top-actions">
-          <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
-            设置
-          </button>
-          <button type="button" className="settings-button" onClick={() => void onLogout()}>
-            Sign out
-          </button>
-        </div>
-      </div>
+      <div className="console-layout">
+        <aside className="side-rail" aria-label="控制台状态">
+          <div className="brand-mark">
+            <span>PC</span>
+          </div>
+          <nav className="rail-nav" aria-label="页面区域">
+            <a href="#overview">总览</a>
+            <a href="#risk">风险</a>
+            <a href="#distribution">分布</a>
+          </nav>
+          <div className="rail-status" aria-label="系统状态">
+            <span>Snapshots</span>
+            <strong>{schedulerEnabled ? 'Auto' : 'Manual'}</strong>
+          </div>
+        </aside>
+
+        <div className="workspace">
+          <div className="top-bar">
+            <div className="top-copy">
+              <p className="panel-kicker">Profits Check</p>
+              <h1>Portfolio Risk Console</h1>
+              <span>{`Latest snapshot · ${latestSnapshotTime}`}</span>
+            </div>
+            <div className="top-actions">
+              <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
+                设置
+              </button>
+              <button type="button" className="settings-button" onClick={() => void onLogout()}>
+                Sign out
+              </button>
+            </div>
+          </div>
+
+          <div className="system-strip" aria-label="资产监控摘要">
+            <Metric label="总资产" value={formatUsd(totalValue)} />
+            <Metric label="渠道" value={`${configuredChannelCount} 个配置`} />
+            <Metric label="账户分类" value={`${liveAccountCount} 组`} />
+            <Metric label="风险提醒" value={`${riskWarningCount} 条`} />
+          </div>
 
       {notice ? (
         <p className="notice" role="status">
@@ -650,7 +685,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
       ) : null}
 
       <section className="grid">
-        <article className="panel overview-panel">
+        <article className="panel overview-panel" id="overview">
           <div className="panel-head">
             <div className="overview-title">
               <p className="panel-kicker">资产总览</p>
@@ -952,7 +987,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             />
           ) : null}
 
-          <div className="distribution-block">
+          <div className="distribution-block" id="distribution">
             <div className="asset-totals-head">
               <h3>资产分布</h3>
               <span>渠道占比与账户类别。</span>
@@ -1045,6 +1080,8 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           onClose={() => { setShowSettings(false); setEditingChannel(null) }}
         />
       ) : null}
+        </div>
+      </div>
     </main>
   )
 }
@@ -1286,7 +1323,7 @@ function LiquidationRiskPanel({
   const [activeView, setActiveView] = useState<'position' | 'margin'>('position')
 
   return (
-    <div className="liquidation-block">
+    <div className="liquidation-block" id="risk">
       <div className="asset-totals-head">
         <h3>爆仓风险</h3>
         <span>
