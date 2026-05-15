@@ -88,12 +88,10 @@ class OkxProvider(Provider):
         base_url = str(
             self.config.get("baseUrl", self.config.get("base_url", "https://www.okx.com"))
         ).rstrip("/")
-        path = "/api/v5/account/positions?instType=SWAP"
+        path = "/api/v5/account/positions"
         headers = self._signature_headers("GET", path)
         async with provider_http_client() as client:
-            response = await client.get(
-                f"{base_url}/api/v5/account/positions", headers=headers, params={"instType": "SWAP"}
-            )
+            response = await client.get(f"{base_url}{path}", headers=headers)
             response.raise_for_status()
             payload = response.json()
         if payload.get("code") not in {0, "0", None}:
@@ -108,7 +106,7 @@ class OkxProvider(Provider):
         base_url = str(
             self.config.get("baseUrl", self.config.get("base_url", "https://www.okx.com"))
         ).rstrip("/")
-        path = "/api/v5/account/balance"
+        path = "/api/v5/account/account-position-risk"
         headers = self._signature_headers("GET", path)
         async with provider_http_client() as client:
             response = await client.get(f"{base_url}{path}", headers=headers)
@@ -120,11 +118,12 @@ class OkxProvider(Provider):
         if not data:
             return None
         account = data[0]
-        wallet_balance = Decimal(str(account.get("totalEq", "0")))
+        wallet_balance = Decimal(str(account.get("adjEq", account.get("totalEq", "0"))))
         margin_balance = Decimal(str(account.get("adjEq", account.get("totalEq", "0"))))
         unrealized_pnl = _sum_optional_decimal(
-            item.get("upl", "0") for item in account.get("details", [])
+            item.get("upl", "0") for item in account.get("posData", [])
         )
+        risk_percent = _mgn_ratio_percent(account.get("mgnRatio"))
         if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
             return None
         return ContractMarginBalanceRisk(
@@ -133,6 +132,8 @@ class OkxProvider(Provider):
             wallet_balance=wallet_balance,
             margin_balance=margin_balance,
             unrealized_pnl=unrealized_pnl,
+            updated_at_ms=_optional_int(account.get("uTime")),
+            risk_percent_override=risk_percent,
             raw_payload=dict(account),
         )
 
@@ -165,6 +166,12 @@ def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
     return int(str(value))
+
+
+def _mgn_ratio_percent(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return Decimal(str(value)) * Decimal("100")
 
 
 def _sum_optional_decimal(values) -> Decimal:

@@ -437,12 +437,13 @@ async def test_okx_provider_collects_contract_position_risk(httpx_mock) -> None:
 
     httpx_mock.add_response(
         method="GET",
-        url="https://www.okx.com/api/v5/account/positions?instType=SWAP",
+        url="https://www.okx.com/api/v5/account/positions",
         json={
             "code": "0",
             "data": [
                 {
-                    "instId": "BTC-USDT-SWAP",
+                    "instType": "FUTURES",
+                    "instId": "BTC-USDT-260626",
                     "posSide": "long",
                     "pos": "2",
                     "avgPx": "60000",
@@ -466,10 +467,50 @@ async def test_okx_provider_collects_contract_position_risk(httpx_mock) -> None:
     positions = await provider.collect_contract_positions()
 
     assert len(positions) == 1
-    assert positions[0].symbol == "BTC-USDT-SWAP"
+    assert positions[0].symbol == "BTC-USDT-260626"
     assert positions[0].side == "long"
     assert positions[0].quantity == Decimal("2")
     assert positions[0].distance_percent == Decimal("0.17211704")
+
+
+@pytest.mark.asyncio
+async def test_okx_provider_collects_contract_margin_balance_risk_ratio(httpx_mock) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/account-position-risk",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "adjEq": "1000",
+                    "mgnRatio": "1.25",
+                    "uTime": "1700000000001",
+                    "posData": [
+                        {
+                            "upl": "-100",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk is not None
+    assert risk.wallet_balance == Decimal("1000")
+    assert risk.margin_balance == Decimal("1000")
+    assert risk.unrealized_pnl == Decimal("-100")
+    assert risk.updated_at_ms == 1700000000001
+    assert risk.risk_percent == Decimal("125.00000000")
 
 
 @pytest.mark.asyncio

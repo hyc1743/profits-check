@@ -54,10 +54,15 @@ class ContractMarginBalanceRisk:
     margin_balance: Decimal
     unrealized_pnl: Decimal | None
     updated_at_ms: int | None = None
+    risk_percent_override: Decimal | None = None
     raw_payload: dict[str, object] = field(default_factory=dict)
 
     @property
     def risk_percent(self) -> Decimal | None:
+        if self.risk_percent_override is not None:
+            return self.risk_percent_override.quantize(
+                Decimal("0.00000001"), rounding=ROUND_HALF_UP
+            )
         if self.wallet_balance == 0:
             return None
         value = self.margin_balance / self.wallet_balance * Decimal("100")
