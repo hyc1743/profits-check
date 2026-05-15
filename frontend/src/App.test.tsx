@@ -258,6 +258,21 @@ test('renders dashboard data and latest snapshot detail', async () => {
   expect(channelShareHeading.compareDocumentPosition(accountHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 })
 
+test('defaults to light theme and toggles theme from the top bar', async () => {
+  installHandlers()
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect(await screen.findByRole('button', { name: 'Dark mode' })).toBeInTheDocument()
+  expect(document.documentElement).toHaveAttribute('data-theme', 'light')
+
+  await user.click(screen.getByRole('button', { name: 'Dark mode' }))
+
+  expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
+  expect(screen.getByRole('button', { name: 'Light mode' })).toBeInTheDocument()
+})
+
 test('keeps asset distribution details collapsed until opened', async () => {
   installHandlers()
   const user = userEvent.setup()

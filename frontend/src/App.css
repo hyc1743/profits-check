@@ -9,8 +9,8 @@
   position: fixed;
   inset: 0;
   background:
-    linear-gradient(135deg, rgba(240, 185, 11, 0.12), transparent 30rem),
-    linear-gradient(315deg, rgba(46, 189, 133, 0.12), transparent 34rem),
+    linear-gradient(135deg, var(--glow-gold), transparent 30rem),
+    linear-gradient(315deg, var(--glow-green), transparent 34rem),
     linear-gradient(180deg, rgba(238, 246, 240, 0.035), transparent 18rem);
   pointer-events: none;
 }
@@ -40,9 +40,7 @@
   padding: 0.8rem;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(180deg, rgba(18, 22, 24, 0.98), rgba(10, 12, 14, 0.96)),
-    var(--ink-panel);
+  background: var(--rail-gradient), var(--ink-panel);
   box-shadow: 0 28px 80px rgba(5, 7, 8, 0.5);
   backdrop-filter: blur(14px);
 }
@@ -108,9 +106,7 @@
   border: 1px solid var(--border-subtle);
   border-color: rgba(240, 185, 11, 0.18);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(135deg, rgba(25, 29, 31, 0.92), rgba(13, 16, 18, 0.84)),
-    var(--surface-topbar);
+  background: var(--topbar-gradient), var(--surface-topbar);
   box-shadow: var(--shadow-topbar);
   backdrop-filter: blur(14px);
 }
@@ -176,9 +172,7 @@
 }
 
 .overview-panel {
-  background:
-    linear-gradient(180deg, rgba(24, 29, 31, 0.96), rgba(14, 17, 19, 0.9)),
-    var(--surface-card);
+  background: var(--panel-gradient), var(--surface-card);
 }
 
 .overview-panel,
@@ -242,7 +236,7 @@
 .mini-metrics .metric-card:first-child {
   border-color: rgba(240, 185, 11, 0.38);
   background:
-    linear-gradient(135deg, rgba(14, 16, 18, 0.98), rgba(31, 27, 15, 0.94)),
+    var(--hero-card-gradient),
     var(--ink-panel);
 }
 
@@ -296,9 +290,7 @@
   padding: clamp(1.25rem, 3vw, 2rem);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(180deg, rgba(24, 29, 31, 0.96), rgba(13, 16, 18, 0.92)),
-    var(--surface-card);
+  background: var(--panel-gradient), var(--surface-card);
   box-shadow: var(--shadow-dialog);
 }
 
@@ -324,7 +316,6 @@
 .empty-state span,
 .field-hint,
 .channel-share-row span,
-.channel-share-row em,
 .account-row span,
 .account-row em,
 .snapshot-copy span,
@@ -401,6 +392,13 @@
   gap: 0.75rem;
   align-items: center;
   padding: 0.55rem 0;
+}
+
+.channel-share-row em {
+  color: var(--warning);
+  font-family: 'IBM Plex Mono', monospace;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .account-row {
@@ -496,7 +494,7 @@
   gap: 0.35rem;
   min-height: 16rem;
   border-style: dashed;
-  background: rgba(13, 19, 14, 0.68);
+  background: var(--surface-empty);
   box-shadow: none;
   text-align: center;
 }
@@ -663,7 +661,7 @@
 .button-primary {
   border-color: rgba(46, 189, 133, 0.42);
   background:
-    linear-gradient(135deg, rgba(46, 189, 133, 0.18), rgba(12, 15, 17, 0.96));
+    var(--hero-button-gradient);
   color: var(--accent-strong);
   box-shadow: 0 12px 30px rgba(46, 189, 133, 0.12);
 }
@@ -677,14 +675,13 @@
 .button-ghost,
 .settings-button {
   border-color: var(--border-strong);
-  background:
-    linear-gradient(180deg, rgba(25, 30, 33, 0.96), rgba(12, 15, 17, 0.92));
+  background: var(--ghost-gradient);
   color: var(--ink);
 }
 
 .button-danger {
   background: var(--danger);
-  color: #fff3f1;
+  color: var(--contrast-on-danger);
 }
 
 .button-danger-ghost {
@@ -770,9 +767,7 @@ details[open] summary::before {
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(180deg, rgba(22, 27, 30, 0.98), rgba(12, 15, 17, 0.98)),
-    var(--surface-dialog);
+  background: var(--panel-gradient), var(--surface-dialog);
   box-shadow: var(--shadow-dialog);
 }
 
@@ -794,7 +789,7 @@ details[open] summary::before {
 
 .settings-body .panel {
   border-color: var(--border-faint);
-  background: rgba(20, 24, 26, 0.76);
+  background: var(--surface-settings-panel);
   box-shadow: none;
 }
 

@@ -71,11 +71,13 @@ type LiquidationMonitorFormValues = z.output<typeof liquidationMonitorSchema>
 
 const calendarWeekdays = ['日', '一', '二', '三', '四', '五', '六']
 const fallbackChartPalette = {
-  accent: '#c4572e',
-  accentSoft: 'rgba(196,87,46,0.25)',
-  accentFaint: 'rgba(196,87,46,0.02)',
-  ink: '#2f241c',
+  accent: '#2ebd85',
+  accentSoft: 'rgba(46,189,133,0.25)',
+  accentFaint: 'rgba(46,189,133,0.02)',
+  ink: '#182126',
 }
+
+type ThemeMode = 'light' | 'dark'
 
 function hexToRgb(value: string) {
   const normalized = value.replace('#', '')
@@ -374,7 +376,8 @@ function LoginView({ onAuthenticated }: { onAuthenticated: () => Promise<void> }
 
 function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const queryClient = useQueryClient()
-  const [chartPalette] = useState(readChartPalette)
+  const [themeMode, setThemeMode] = useState<ThemeMode>('light')
+  const [chartPalette, setChartPalette] = useState(readChartPalette)
   const [notice, setNotice] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showSnapshotEditor, setShowSnapshotEditor] = useState(false)
@@ -386,6 +389,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
   const [isManualLiquidationRefreshPending, setIsManualLiquidationRefreshPending] = useState(false)
   const hasAutoRefreshedLiquidationMonitor = useRef(false)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode
+  }, [themeMode])
 
   const summaryQuery = useQuery({ queryKey: ['summary'], queryFn: api.getLatestSummary })
   const liveSummaryQuery = useQuery({
@@ -695,6 +702,18 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
               <span>{`Latest snapshot · ${latestSnapshotTime}`}</span>
             </div>
             <div className="top-actions">
+              <button
+                type="button"
+                className="settings-button"
+                onClick={() => {
+                  const nextTheme = themeMode === 'light' ? 'dark' : 'light'
+                  document.documentElement.dataset.theme = nextTheme
+                  setThemeMode(nextTheme)
+                  setChartPalette(readChartPalette())
+                }}
+              >
+                {themeMode === 'light' ? 'Dark mode' : 'Light mode'}
+              </button>
               <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
                 设置
               </button>
