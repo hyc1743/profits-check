@@ -519,6 +519,40 @@ async def test_okx_provider_collects_contract_margin_balance_risk_ratio(httpx_mo
 
 
 @pytest.mark.asyncio
+async def test_okx_provider_ignores_unavailable_contract_margin_balance_risk(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/account-position-risk",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "adjEq": "",
+                    "mgnRatio": "",
+                    "posData": [
+                        {
+                            "upl": "-100",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    assert await provider.collect_contract_margin_balance() is None
+
+
+@pytest.mark.asyncio
 async def test_bybit_provider_collects_contract_position_risk(httpx_mock) -> None:
     from profits_check_backend.providers.bybit import BybitProvider
 

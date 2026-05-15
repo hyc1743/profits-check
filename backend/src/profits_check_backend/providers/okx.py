@@ -128,13 +128,17 @@ class OkxProvider(Provider):
         if not data:
             return None
         account = data[0]
-        wallet_balance = Decimal(str(account.get("adjEq", account.get("totalEq", "0"))))
-        margin_balance = Decimal(str(account.get("adjEq", account.get("totalEq", "0"))))
+        wallet_balance = _optional_decimal(account.get("adjEq")) or _optional_decimal(
+            account.get("totalEq")
+        )
+        margin_balance = _optional_decimal(account.get("adjEq")) or _optional_decimal(
+            account.get("totalEq")
+        )
         unrealized_pnl = _sum_optional_decimal(
             item.get("upl", "0") for item in account.get("posData", [])
         )
         risk_percent = _mgn_ratio_percent(account.get("mgnRatio"))
-        if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
+        if wallet_balance is None or margin_balance is None:
             return None
         return ContractMarginBalanceRisk(
             provider="okx",

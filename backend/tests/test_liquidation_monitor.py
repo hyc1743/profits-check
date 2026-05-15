@@ -176,6 +176,38 @@ def test_manual_refresh_collects_positions_and_does_not_alert_when_alerts_disabl
     assert payload["positions"][0]["distancePercent"] == "0.17211704"
 
 
+def test_manual_refresh_keeps_positions_when_margin_balance_collection_fails(client) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return [position(provider="okx", channel_name="OKX", symbol="LAB-USDT-SWAP")]
+
+        async def collect_contract_margin_balance(self):
+            raise RuntimeError("OKX margin risk unavailable")
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    create_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "okx",
+            "kind": "cex",
+            "name": "OKX",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret", "passphrase": "pass"},
+        },
+    )
+    assert create_response.status_code == 201
+
+    refresh_response = client.post("/api/liquidation-monitor/refresh")
+
+    assert refresh_response.status_code == 200
+    payload = refresh_response.json()
+    assert payload["status"] == "partial"
+    assert payload["failureCount"] == 1
+    assert len(payload["positions"]) == 1
+    assert payload["positions"][0]["symbol"] == "LAB-USDT-SWAP"
+    assert payload["marginBalances"] == []
+
+
 def test_manual_refresh_collects_margin_balance_risk_by_channel(client) -> None:
     class StubProvider:
         async def collect_contract_positions(self):

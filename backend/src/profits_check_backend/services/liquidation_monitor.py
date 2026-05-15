@@ -186,13 +186,18 @@ async def run_liquidation_monitor(
                 secrets=decode_secret_config(channel, cipher),
             )
             provider_positions = await provider.collect_contract_positions()
-            collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
+        except Exception:
+            failure_count += 1
+            continue
+
+        collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
+        try:
             provider_margin_balance = (
                 await collect_margin_balance() if collect_margin_balance is not None else None
             )
         except Exception:
             failure_count += 1
-            continue
+            provider_margin_balance = None
 
         for provider_position in provider_positions:
             model = upsert_liquidation_position(
