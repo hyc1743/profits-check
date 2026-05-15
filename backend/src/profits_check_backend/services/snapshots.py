@@ -66,6 +66,8 @@ def provider_snapshot_to_balances(
 ) -> list[NormalizedAssetBalance]:
     balances = []
     for item in provider_snapshot.assets:
+        if item.metadata.get("portfolioAccounting") == "informational":
+            continue
         balances.append(
             NormalizedAssetBalance(
                 provider=channel.provider,

@@ -88,7 +88,6 @@ class OkxProvider(Provider):
                 )
             strategy_assets = await self._collect_strategy_assets(client, base_url)
             assets.extend(strategy_assets)
-            total_value += _strategy_snapshot_total_value_usd(strategy_assets)
             return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
     async def collect_contract_positions(self) -> list[ContractPositionRisk]:
@@ -405,17 +404,6 @@ def _strategy_asset(item: dict[str, object], metadata_type: str) -> AssetBalance
     )
 
 
-def _strategy_snapshot_total_value_usd(assets: list[AssetBalance]) -> Decimal:
-    total = Decimal("0")
-    for asset in assets:
-        asset_type = asset.metadata.get("type", "")
-        if not asset_type.startswith("strategy_") or asset_type.endswith("_position"):
-            continue
-        if asset.value_usd is not None:
-            total += asset.value_usd
-    return total
-
-
 def _strategy_position_asset(item: dict[str, object], metadata_type: str) -> AssetBalance:
     value_usd = _first_decimal(item, "notionalUsd", "imr")
     asset_symbol = _strategy_symbol(item, default=str(item.get("ccy", "POSITION")).upper())
@@ -467,7 +455,11 @@ def _strategy_symbol(item: dict[str, object], *, default: str) -> str:
 
 
 def _strategy_metadata(item: dict[str, object], metadata_type: str) -> dict[str, str]:
-    metadata: dict[str, str] = {"source": "okx", "type": metadata_type}
+    metadata: dict[str, str] = {
+        "source": "okx",
+        "type": metadata_type,
+        "portfolioAccounting": "informational",
+    }
     for key in (
         "algoId",
         "algoOrdType",

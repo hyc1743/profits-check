@@ -324,6 +324,70 @@ def test_live_summary_returns_total_without_creating_snapshot(client) -> None:
     assert snapshots_response.json() == []
 
 
+def test_live_summary_excludes_informational_assets_from_account_category_totals(
+    client,
+) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    class StubProvider:
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=Decimal("2500"),
+                assets=[
+                    AssetBalance(
+                        asset_symbol="USDT",
+                        quantity=Decimal("2500"),
+                        value_usd=Decimal("2500"),
+                        metadata={"source": "okx", "type": "trading"},
+                    ),
+                    AssetBalance(
+                        asset_symbol="BTC-USDT-SWAP",
+                        quantity=Decimal("1"),
+                        value_usd=Decimal("600"),
+                        metadata={
+                            "source": "okx",
+                            "type": "strategy_signal",
+                            "portfolioAccounting": "informational",
+                        },
+                    ),
+                ],
+            )
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "okx",
+            "kind": "cex",
+            "name": "OKX",
+            "publicConfig": {},
+            "secretConfig": {
+                "apiKey": "key-1",
+                "apiSecret": "secret-1",
+                "passphrase": "pass-1",
+            },
+        },
+    )
+    assert channel_response.status_code == 201
+
+    summary_response = client.get("/api/summary/live")
+
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["totalValueUsd"] == "2500.00000000"
+    assert summary["accountCategoryTotals"] == [
+        {
+            "provider": "okx",
+            "channelName": "OKX",
+            "accountScope": "trading",
+            "valueUsd": "2500.00000000",
+            "assetCount": 1,
+        }
+    ]
+
+
 def test_binance_live_summary_ignores_unreadable_okx_dex_config(client) -> None:
     from decimal import Decimal
 

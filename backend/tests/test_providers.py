@@ -609,8 +609,9 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
 
     snapshot = await provider.collect_snapshot()
 
-    assert snapshot.total_value_usd == Decimal("3778.273049974749177")
+    assert snapshot.total_value_usd == Decimal("2500")
     strategy_assets = [asset for asset in snapshot.assets if asset.metadata["type"].startswith("strategy_")]
+    assert all(asset.metadata["portfolioAccounting"] == "informational" for asset in strategy_assets)
     assert {asset.metadata["type"] for asset in strategy_assets} == {
         "strategy_grid",
         "strategy_contract_grid",
