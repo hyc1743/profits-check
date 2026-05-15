@@ -1,10 +1,12 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as echarts from 'echarts'
+import type { EChartsOption } from 'echarts'
 import { HttpResponse, http } from 'msw'
 import { vi } from 'vitest'
 
 import App from './App'
+import { ChartSurface } from './components/chart-surface'
 import { server } from './test/setup'
 
 const summaryPayload = {
@@ -307,7 +309,7 @@ test('live refresh shows account categories', async () => {
   expect(screen.getByText('主账户 · 理财')).toBeInTheDocument()
 })
 
-test('shows liquidation risk positions and can refresh them', async () => {
+test('shows liquidation risk positions without refreshing on initial dashboard load', async () => {
   installHandlers()
   let refreshCount = 0
   server.use(
@@ -321,7 +323,7 @@ test('shows liquidation risk positions and can refresh them', async () => {
   render(<App />)
 
   expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
-  await waitFor(() => expect(refreshCount).toBe(1))
+  expect(refreshCount).toBe(0)
   expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
   expect(screen.getByText('0%')).toBeInTheDocument()
   expect(screen.queryByText('0.1721%')).not.toBeInTheDocument()
@@ -330,10 +332,10 @@ test('shows liquidation risk positions and can refresh them', async () => {
   expect(screen.getByText('已提醒')).toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
-  await waitFor(() => expect(refreshCount).toBe(2))
+  await waitFor(() => expect(refreshCount).toBe(1))
 })
 
-test('keeps manual liquidation refresh control idle while automatic refresh is pending', async () => {
+test('shows pending state only while manual liquidation refresh is pending', async () => {
   installHandlers()
   type JsonResponse = ReturnType<typeof HttpResponse.json>
   let resolveRefresh: (response: JsonResponse) => void = () => {}
@@ -349,9 +351,12 @@ test('keeps manual liquidation refresh control idle while automatic refresh is p
 
   expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '刷新爆仓风险' })).toBeEnabled()
-  expect(screen.queryByRole('button', { name: '刷新中...' })).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
+  expect(screen.getByRole('button', { name: '刷新中...' })).toBeDisabled()
 
   resolveRefresh(HttpResponse.json(liquidationMonitorPayload))
+  expect(await screen.findByRole('button', { name: '刷新爆仓风险' })).toBeEnabled()
 })
 
 test('switches liquidation risk panel to margin balance risk by channel', async () => {
@@ -755,4 +760,24 @@ test('uses every snapshot date as an asset trend x-axis label', async () => {
 
   expect(assetTrendOption?.xAxis?.type).toBe('category')
   expect(assetTrendOption?.xAxis?.data).toEqual(['05-10', '05-11'])
+})
+
+test('reuses the chart instance when chart options update', async () => {
+  const firstOption: EChartsOption = { series: [{ type: 'line', data: [1] }] }
+  const secondOption: EChartsOption = { series: [{ type: 'line', data: [1, 2] }] }
+
+  const { rerender, unmount } = render(<ChartSurface ariaLabel="资产走势" option={firstOption} />)
+
+  await waitFor(() => expect(echarts.init).toHaveBeenCalledTimes(1))
+  const chart = vi.mocked(echarts.init).mock.results[0]?.value
+
+  rerender(<ChartSurface ariaLabel="资产走势" option={secondOption} />)
+
+  await waitFor(() => expect(chart.setOption).toHaveBeenLastCalledWith(secondOption))
+  expect(echarts.init).toHaveBeenCalledTimes(1)
+  expect(chart.dispose).not.toHaveBeenCalled()
+
+  unmount()
+
+  expect(chart.dispose).toHaveBeenCalledTimes(1)
 })

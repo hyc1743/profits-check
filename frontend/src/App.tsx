@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm, useWatch } from 'react-hook-form'
@@ -388,7 +388,6 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
   const [isManualLiquidationRefreshPending, setIsManualLiquidationRefreshPending] = useState(false)
-  const hasAutoRefreshedLiquidationMonitor = useRef(false)
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode
@@ -472,14 +471,6 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
       }
     },
   })
-
-  useEffect(() => {
-    if (hasAutoRefreshedLiquidationMonitor.current) {
-      return
-    }
-    hasAutoRefreshedLiquidationMonitor.current = true
-    refreshLiquidationMonitorMutation.mutate({ silent: true })
-  }, [refreshLiquidationMonitorMutation])
 
   const liquidationMonitorMutation = useMutation({
     mutationFn: api.updateLiquidationMonitor,
@@ -1226,28 +1217,11 @@ function SettingsDialog({
     }
   }, [onClose])
 
-  const handleOverlayClick = useCallback(() => {
-    onClose()
-  }, [onClose])
-
-  const handleOverlayKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        onClose()
-      }
-    },
-    [onClose],
-  )
-
   return (
     <div
       className="settings-overlay"
-      role="button"
-      tabIndex={-1}
-      aria-label="关闭设置"
-      onClick={handleOverlayClick}
-      onKeyDown={handleOverlayKeyDown}
+      role="presentation"
+      onClick={onClose}
     >
       <div
         ref={dialogRef}
@@ -1490,8 +1464,8 @@ function ChannelList({
 
   if (channels.length === 0) {
     return (
-      <div className="channel-list">
-        <div className="empty-state" style={{ minHeight: '8rem' }}>
+        <div className="channel-list">
+        <div className="empty-state channel-empty-state">
           <strong>还没有渠道</strong>
           <span>添加一个交易所或链上钱包开始使用。</span>
         </div>
@@ -1747,14 +1721,14 @@ function ChannelForm({
             </Field>
           ) : null}
           {editingChannel ? (
-            <p className="hint" style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
+            <p className="field-hint secret-hint">
               密钥已脱敏显示；留空或保持原样不会修改现有配置。
             </p>
           ) : null}
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="form-action-row">
         <button type="submit" className="button button-primary" disabled={isSaving}>
           {isSaving ? '保存中...' : editingChannel ? '更新渠道' : '保存渠道'}
         </button>

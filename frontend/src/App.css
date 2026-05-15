@@ -42,7 +42,6 @@
   border-radius: var(--radius-lg);
   background: var(--rail-gradient), var(--ink-panel);
   box-shadow: 0 28px 80px rgba(5, 7, 8, 0.5);
-  backdrop-filter: blur(14px);
 }
 
 .brand-mark {
@@ -108,7 +107,6 @@
   border-radius: var(--radius-lg);
   background: var(--topbar-gradient), var(--surface-topbar);
   box-shadow: var(--shadow-topbar);
-  backdrop-filter: blur(14px);
 }
 
 .top-copy {
@@ -163,7 +161,6 @@
   border: 1px solid var(--border-subtle);
   background: var(--surface-card);
   box-shadow: var(--shadow-panel);
-  backdrop-filter: blur(18px);
 }
 
 .panel {
@@ -499,6 +496,10 @@
   text-align: center;
 }
 
+.channel-empty-state {
+  min-height: 8rem;
+}
+
 .calendar-panel {
   display: grid;
   gap: 0.85rem;
@@ -514,7 +515,7 @@
 
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(4rem, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0.35rem;
   min-width: 100%;
 }
@@ -587,6 +588,12 @@
   gap: 0.5rem;
   flex-wrap: wrap;
   max-width: 34rem;
+}
+
+.form-action-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .channel-layout {
@@ -749,6 +756,11 @@ details[open] summary::before {
   font-weight: 700;
 }
 
+.secret-hint {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+}
+
 .settings-overlay {
   position: fixed;
   inset: 0;
@@ -759,7 +771,6 @@ details[open] summary::before {
   padding: 2rem;
   overflow-y: auto;
   background: var(--surface-overlay);
-  backdrop-filter: blur(5px);
 }
 
 .settings-dialog {
@@ -953,6 +964,10 @@ details[open] summary::before {
 
   .calendar-day {
     min-height: 3rem;
-    padding: 0.34rem;
+    padding: 0.3rem;
+  }
+
+  .calendar-value {
+    font-size: clamp(0.68rem, calc(105cqw / var(--asset-digits, 5)), 0.82rem);
   }
 }

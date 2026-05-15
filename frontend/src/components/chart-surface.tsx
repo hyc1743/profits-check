@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
-import type { EChartsOption } from 'echarts'
+import type { EChartsOption, EChartsType } from 'echarts'
 import type { ReactNode } from 'react'
+
+import { loadEcharts } from '../lib/load-echarts'
 
 interface ChartSurfaceProps {
   ariaLabel: string
@@ -11,26 +12,45 @@ interface ChartSurfaceProps {
 
 export function ChartSurface({ ariaLabel, option, children }: ChartSurfaceProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const chartRef = useRef<EChartsType | null>(null)
+  const latestOptionRef = useRef(option)
 
   useEffect(() => {
-    if (!containerRef.current) {
+    latestOptionRef.current = option
+    chartRef.current?.setOption(option)
+  }, [option])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) {
       return
     }
 
-    const chart = echarts.init(containerRef.current)
-    chart.setOption(option)
+    let isMounted = true
+    let observer: ResizeObserver | null = null
 
-    const observer = new ResizeObserver(() => {
-      chart.resize()
+    void loadEcharts().then((echarts) => {
+      if (!isMounted) {
+        return
+      }
+
+      const chart = echarts.init(container)
+      chartRef.current = chart
+      chart.setOption(latestOptionRef.current)
+
+      observer = new ResizeObserver(() => {
+        chart.resize()
+      })
+      observer.observe(container)
     })
 
-    observer.observe(containerRef.current)
-
     return () => {
-      observer.disconnect()
-      chart.dispose()
+      isMounted = false
+      observer?.disconnect()
+      chartRef.current?.dispose()
+      chartRef.current = null
     }
-  }, [option])
+  }, [])
 
   return (
     <figure className="chart-figure">

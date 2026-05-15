@@ -9,9 +9,18 @@ vi.mock('echarts', () => {
     resize: vi.fn(),
     dispose: vi.fn(),
   }
+  const init = vi.fn(() => chart)
 
   return {
-    init: vi.fn(() => chart),
+    init,
+  }
+})
+
+vi.mock('../lib/load-echarts', async () => {
+  const echarts = await vi.importMock<typeof import('echarts')>('echarts')
+
+  return {
+    loadEcharts: vi.fn(async () => echarts),
   }
 })
 
@@ -48,6 +57,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   server.resetHandlers()
+  vi.clearAllMocks()
 })
 
 afterAll(() => {
