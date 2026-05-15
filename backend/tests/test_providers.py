@@ -437,7 +437,12 @@ async def test_okx_provider_collects_contract_position_risk(httpx_mock) -> None:
 
     httpx_mock.add_response(
         method="GET",
-        url="https://www.okx.com/api/v5/account/positions",
+        url="https://www.okx.com/api/v5/account/positions?instType=SWAP",
+        json={"code": "0", "data": []},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/positions?instType=FUTURES",
         json={
             "code": "0",
             "data": [

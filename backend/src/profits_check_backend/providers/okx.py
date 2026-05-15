@@ -17,6 +17,9 @@ from profits_check_backend.providers.base import (
 from profits_check_backend.providers.http import provider_http_client
 
 
+OKX_CONTRACT_POSITION_TYPES = ("SWAP", "FUTURES")
+
+
 class OkxProvider(Provider):
     def __init__(
         self,
@@ -88,19 +91,26 @@ class OkxProvider(Provider):
         base_url = str(
             self.config.get("baseUrl", self.config.get("base_url", "https://www.okx.com"))
         ).rstrip("/")
-        path = "/api/v5/account/positions"
-        headers = self._signature_headers("GET", path)
+        positions: list[ContractPositionRisk] = []
         async with provider_http_client() as client:
-            response = await client.get(f"{base_url}{path}", headers=headers)
-            response.raise_for_status()
-            payload = response.json()
-        if payload.get("code") not in {0, "0", None}:
-            raise ProviderError(str(payload.get("msg", "OKX request failed")))
-        return [
-            self._position_from_payload(item)
-            for item in payload.get("data", [])
-            if Decimal(str(item.get("pos", "0"))) != 0
-        ]
+            for inst_type in OKX_CONTRACT_POSITION_TYPES:
+                path = f"/api/v5/account/positions?instType={inst_type}"
+                headers = self._signature_headers("GET", path)
+                response = await client.get(
+                    f"{base_url}/api/v5/account/positions",
+                    headers=headers,
+                    params={"instType": inst_type},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("code") not in {0, "0", None}:
+                    raise ProviderError(str(payload.get("msg", "OKX request failed")))
+                positions.extend(
+                    self._position_from_payload(item)
+                    for item in payload.get("data", [])
+                    if _optional_decimal(item.get("pos")) not in (None, Decimal("0"))
+                )
+        return positions
 
     async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
         base_url = str(
