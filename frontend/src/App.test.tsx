@@ -318,6 +318,27 @@ test('shows liquidation risk positions and can refresh them', async () => {
   await waitFor(() => expect(refreshCount).toBe(2))
 })
 
+test('keeps manual liquidation refresh control idle while automatic refresh is pending', async () => {
+  installHandlers()
+  type JsonResponse = ReturnType<typeof HttpResponse.json>
+  let resolveRefresh: (response: JsonResponse) => void = () => {}
+  server.use(
+    http.post('/api/liquidation-monitor/refresh', () =>
+      new Promise<JsonResponse>((resolve) => {
+        resolveRefresh = resolve
+      }),
+    ),
+  )
+
+  render(<App />)
+
+  expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '刷新爆仓风险' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: '刷新中...' })).not.toBeInTheDocument()
+
+  resolveRefresh(HttpResponse.json(liquidationMonitorPayload))
+})
+
 test('switches liquidation risk panel to margin balance risk by channel', async () => {
   installHandlers()
   const user = userEvent.setup()

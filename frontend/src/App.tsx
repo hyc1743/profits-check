@@ -384,6 +384,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
   const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
+  const [isManualLiquidationRefreshPending, setIsManualLiquidationRefreshPending] = useState(false)
   const hasAutoRefreshedLiquidationMonitor = useRef(false)
 
   const summaryQuery = useQuery({ queryKey: ['summary'], queryFn: api.getLatestSummary })
@@ -446,6 +447,11 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
       void variables
       return api.refreshLiquidationMonitor()
     },
+    onMutate: (variables) => {
+      if (!variables?.silent) {
+        setIsManualLiquidationRefreshPending(true)
+      }
+    },
     onSuccess: (result, variables) => {
       queryClient.setQueryData(['liquidation-monitor'], result)
       if (!variables?.silent) {
@@ -453,6 +459,11 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
       }
     },
     onError: (error) => setNotice(error.message),
+    onSettled: (_result, _error, variables) => {
+      if (!variables?.silent) {
+        setIsManualLiquidationRefreshPending(false)
+      }
+    },
   })
 
   useEffect(() => {
@@ -1004,7 +1015,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           {liquidationMonitorQuery.data ? (
             <LiquidationRiskPanel
               monitor={liquidationMonitorQuery.data}
-              isRefreshing={refreshLiquidationMonitorMutation.isPending}
+              isRefreshing={isManualLiquidationRefreshPending}
               onRefresh={() => refreshLiquidationMonitorMutation.mutate(undefined)}
             />
           ) : null}
