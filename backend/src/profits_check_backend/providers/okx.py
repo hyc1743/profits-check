@@ -128,10 +128,10 @@ class OkxProvider(Provider):
         if not data:
             return None
         account = data[0]
-        wallet_balance = _optional_decimal(account.get("adjEq")) or _optional_decimal(
+        wallet_balance = _decimal_or_none(account.get("adjEq")) or _decimal_or_none(
             account.get("totalEq")
         )
-        margin_balance = _optional_decimal(account.get("adjEq")) or _optional_decimal(
+        margin_balance = _decimal_or_none(account.get("adjEq")) or _decimal_or_none(
             account.get("totalEq")
         )
         unrealized_pnl = _sum_optional_decimal(
@@ -139,7 +139,7 @@ class OkxProvider(Provider):
         )
         risk_percent = _mgn_ratio_percent(account.get("mgnRatio"))
         if wallet_balance is None or margin_balance is None:
-            return None
+            return await self._collect_contract_margin_balance_from_account_balance(base_url)
         return ContractMarginBalanceRisk(
             provider="okx",
             channel_name=self.channel_name,
@@ -148,6 +148,39 @@ class OkxProvider(Provider):
             unrealized_pnl=unrealized_pnl,
             updated_at_ms=_optional_int(account.get("uTime")),
             risk_percent_override=risk_percent,
+            raw_payload=dict(account),
+        )
+
+    async def _collect_contract_margin_balance_from_account_balance(
+        self, base_url: str
+    ) -> ContractMarginBalanceRisk | None:
+        path = "/api/v5/account/balance"
+        headers = self._signature_headers("GET", path)
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        if payload.get("code") not in {0, "0", None}:
+            raise ProviderError(str(payload.get("msg", "OKX request failed")))
+        data = payload.get("data", [])
+        if not data:
+            return None
+        account = data[0]
+        wallet_balance = _decimal_or_none(account.get("totalEq"))
+        if wallet_balance is None:
+            return None
+        details = account.get("details", [])
+        unrealized_pnl = _decimal_or_none(account.get("upl"))
+        if unrealized_pnl is None:
+            unrealized_pnl = _sum_optional_decimal(item.get("upl", "0") for item in details)
+        return ContractMarginBalanceRisk(
+            provider="okx",
+            channel_name=self.channel_name,
+            wallet_balance=wallet_balance,
+            margin_balance=wallet_balance,
+            unrealized_pnl=unrealized_pnl,
+            updated_at_ms=_optional_int(account.get("uTime")),
+            risk_percent_override=_lowest_mgn_ratio_percent(details),
             raw_payload=dict(account),
         )
 
@@ -176,6 +209,12 @@ def _optional_decimal(value: object) -> Decimal | None:
     return None if parsed == 0 else parsed
 
 
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return Decimal(str(value))
+
+
 def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
@@ -186,6 +225,21 @@ def _mgn_ratio_percent(value: object) -> Decimal | None:
     if value in (None, ""):
         return None
     return Decimal(str(value)) * Decimal("100")
+
+
+def _lowest_mgn_ratio_percent(items: object) -> Decimal | None:
+    if not isinstance(items, list):
+        return None
+    ratios = [
+        ratio
+        for item in items
+        if isinstance(item, dict)
+        for ratio in [_decimal_or_none(item.get("mgnRatio"))]
+        if ratio is not None
+    ]
+    if not ratios:
+        return None
+    return min(ratios) * Decimal("100")
 
 
 def _sum_optional_decimal(values) -> Decimal:

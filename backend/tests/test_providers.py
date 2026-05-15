@@ -519,7 +519,7 @@ async def test_okx_provider_collects_contract_margin_balance_risk_ratio(httpx_mo
 
 
 @pytest.mark.asyncio
-async def test_okx_provider_ignores_unavailable_contract_margin_balance_risk(
+async def test_okx_provider_falls_back_to_balance_for_contract_margin_balance_risk(
     httpx_mock,
 ) -> None:
     from profits_check_backend.providers.okx import OkxProvider
@@ -542,6 +542,34 @@ async def test_okx_provider_ignores_unavailable_contract_margin_balance_risk(
             ],
         },
     )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/balance",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "totalEq": "10011.89897304795",
+                    "upl": "-942.1965263679089",
+                    "uTime": "1778829138809",
+                    "details": [
+                        {
+                            "ccy": "USDT",
+                            "availEq": "2932.814574222276",
+                            "upl": "-949.3814399999994",
+                            "mgnRatio": "50.7479390483589",
+                        },
+                        {
+                            "ccy": "ETC",
+                            "availEq": "34.8258067094214",
+                            "upl": "7.184913632090456",
+                            "mgnRatio": "38.84565635477536",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
     provider = OkxProvider(
         channel_name="OKX",
         config={},
@@ -549,7 +577,14 @@ async def test_okx_provider_ignores_unavailable_contract_margin_balance_risk(
         now_factory=lambda: "2026-05-09T00:00:00.000Z",
     )
 
-    assert await provider.collect_contract_margin_balance() is None
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk is not None
+    assert risk.wallet_balance == Decimal("10011.89897304795")
+    assert risk.margin_balance == Decimal("10011.89897304795")
+    assert risk.unrealized_pnl == Decimal("-942.1965263679089")
+    assert risk.updated_at_ms == 1778829138809
+    assert risk.risk_percent == Decimal("3884.56563548")
 
 
 @pytest.mark.asyncio
