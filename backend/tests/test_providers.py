@@ -9,6 +9,40 @@ from profits_check_backend.providers.base import AssetBalance, ProviderError
 from profits_check_backend.providers.registry import build_provider
 
 
+def add_empty_okx_strategy_responses(httpx_mock) -> None:
+    for algo_ord_type in ("grid", "contract_grid"):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                "https://www.okx.com/api/v5/tradingBot/grid/orders-algo-pending"
+                f"?algoOrdType={algo_ord_type}&limit=100"
+            ),
+            json={"code": "0", "data": []},
+        )
+    for algo_ord_type in ("spot_dca", "contract_dca"):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list"
+                f"?algoOrdType={algo_ord_type}&limit=100"
+            ),
+            json={"code": "0", "data": []},
+        )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/signal/orders-algo-pending"
+            "?algoOrdType=contract&limit=100"
+        ),
+        json={"code": "0", "data": []},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-pending?limit=100",
+        json={"code": "0", "data": []},
+    )
+
+
 @pytest.mark.asyncio
 async def test_binance_provider_collects_balances_and_prices(httpx_mock) -> None:
     from profits_check_backend.providers.binance import BinanceProvider
@@ -266,6 +300,7 @@ async def test_okx_provider_collects_trading_balances(httpx_mock) -> None:
             ]
         },
     )
+    add_empty_okx_strategy_responses(httpx_mock)
 
     provider = OkxProvider(
         channel_name="OKX",
@@ -278,6 +313,273 @@ async def test_okx_provider_collects_trading_balances(httpx_mock) -> None:
 
     assert snapshot.total_value_usd == Decimal("2500")
     assert snapshot.assets[0].metadata["type"] == "trading"
+
+
+@pytest.mark.asyncio
+async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/balance",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "totalEq": "2500",
+                    "details": [
+                        {"ccy": "USDT", "eq": "2500", "eqUsd": "2500"},
+                    ],
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/grid/orders-algo-pending"
+            "?algoOrdType=grid&limit=100"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "grid-1",
+                    "algoOrdType": "grid",
+                    "instId": "BTC-USDT",
+                    "instType": "SPOT",
+                    "investment": "100",
+                    "totalPnl": "5",
+                    "state": "running",
+                    "uTime": "1700000000000",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/grid/orders-algo-pending"
+            "?algoOrdType=contract_grid&limit=100"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "contract-grid-1",
+                    "algoOrdType": "contract_grid",
+                    "instId": "SPACEX-USDT-SWAP",
+                    "instType": "SWAP",
+                    "investment": "500",
+                    "totalPnl": "104.44875307343695",
+                    "state": "running",
+                    "uTime": "1700000000001",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/grid/positions"
+            "?algoId=contract-grid-1&algoOrdType=contract_grid"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "contract-grid-1",
+                    "instId": "SPACEX-USDT-SWAP",
+                    "instType": "SWAP",
+                    "ccy": "USDT",
+                    "pos": "500",
+                    "notionalUsd": "604.4",
+                    "upl": "-0.01",
+                    "uTime": "1700000000002",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list"
+            "?algoOrdType=spot_dca&limit=100"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "spot-dca-1",
+                    "algoOrdType": "spot_dca",
+                    "instId": "ETH-USDT",
+                    "investmentAmt": "200",
+                    "investmentCcy": "USDT",
+                    "totalPnl": "10",
+                    "state": "running",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list"
+            "?algoOrdType=contract_dca&limit=100"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "contract-dca-1",
+                    "algoOrdType": "contract_dca",
+                    "instId": "ETH-USDT-SWAP",
+                    "investmentAmt": "300",
+                    "investmentCcy": "USDT",
+                    "totalPnl": "-20",
+                    "state": "running",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/dca/position-details"
+            "?algoId=contract-dca-1&algoOrdType=contract_dca"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "contract-dca-1",
+                    "instId": "ETH-USDT-SWAP",
+                    "instType": "SWAP",
+                    "ccy": "USDT",
+                    "pos": "15",
+                    "notionalUsd": "280",
+                    "upl": "-20",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/signal/orders-algo-pending"
+            "?algoOrdType=contract&limit=100"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "signal-1",
+                    "algoOrdType": "contract",
+                    "instType": "SWAP",
+                    "instIds": ["BTC-USDT-SWAP"],
+                    "totalEq": "26.824296901312227",
+                    "totalPnl": "-73.1757030986877733",
+                    "state": "running",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/signal/positions"
+            "?algoId=signal-1&algoOrdType=contract"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "signal-1",
+                    "instId": "BTC-USDT-SWAP",
+                    "instType": "SWAP",
+                    "ccy": "USDT",
+                    "pos": "1",
+                    "notionalUsd": "26.8",
+                    "upl": "-1",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-pending?limit=100",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "recurring-1",
+                    "algoOrdType": "recurring",
+                    "instType": "SPOT",
+                    "investmentAmt": "50",
+                    "investmentCcy": "USDT",
+                    "totalPnl": "2",
+                    "state": "running",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-details"
+            "?algoId=recurring-1"
+        ),
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "algoId": "recurring-1",
+                    "algoOrdType": "recurring",
+                    "instType": "SPOT",
+                    "investmentAmt": "50",
+                    "investmentCcy": "USDT",
+                    "totalPnl": "2",
+                    "recurringList": [{"ccy": "BTC", "totalAmt": "0.001", "profit": "2"}],
+                    "state": "running",
+                }
+            ],
+        },
+    )
+
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.total_value_usd == Decimal("2500")
+    strategy_assets = [asset for asset in snapshot.assets if asset.metadata["type"].startswith("strategy_")]
+    assert {asset.metadata["type"] for asset in strategy_assets} == {
+        "strategy_grid",
+        "strategy_contract_grid",
+        "strategy_contract_grid_position",
+        "strategy_spot_dca",
+        "strategy_contract_dca",
+        "strategy_contract_dca_position",
+        "strategy_signal",
+        "strategy_signal_position",
+        "strategy_recurring",
+    }
+    assert any(
+        asset.asset_symbol == "SPACEX-USDT-SWAP"
+        and asset.quantity == Decimal("500")
+        and asset.value_usd == Decimal("604.4")
+        for asset in strategy_assets
+    )
+    assert any(
+        asset.metadata["algoId"] == "recurring-1"
+        and asset.asset_symbol == "RECURRING"
+        and asset.value_usd == Decimal("52")
+        for asset in strategy_assets
+    )
 
 
 @pytest.mark.asyncio
@@ -511,11 +813,11 @@ async def test_okx_provider_collects_contract_margin_balance_risk_ratio(httpx_mo
     risk = await provider.collect_contract_margin_balance()
 
     assert risk is not None
-    assert risk.wallet_balance == Decimal("1000")
+    assert risk.wallet_balance == Decimal("1100")
     assert risk.margin_balance == Decimal("1000")
     assert risk.unrealized_pnl == Decimal("-100")
     assert risk.updated_at_ms == 1700000000001
-    assert risk.risk_percent == Decimal("125.00000000")
+    assert risk.risk_percent == Decimal("90.90909091")
 
 
 @pytest.mark.asyncio
@@ -580,11 +882,11 @@ async def test_okx_provider_falls_back_to_balance_for_contract_margin_balance_ri
     risk = await provider.collect_contract_margin_balance()
 
     assert risk is not None
-    assert risk.wallet_balance == Decimal("10011.89897304795")
+    assert risk.wallet_balance == Decimal("10954.0954994158589")
     assert risk.margin_balance == Decimal("10011.89897304795")
     assert risk.unrealized_pnl == Decimal("-942.1965263679089")
     assert risk.updated_at_ms == 1778829138809
-    assert risk.risk_percent == Decimal("3884.56563548")
+    assert risk.risk_percent == Decimal("91.39868256")
 
 
 @pytest.mark.asyncio
