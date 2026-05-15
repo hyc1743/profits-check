@@ -4,47 +4,48 @@
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #17201b;
+  color: #161714;
   background:
-    linear-gradient(90deg, rgba(27, 104, 82, 0.08) 1px, transparent 1px),
-    linear-gradient(180deg, #f4f7f1 0%, #ecefe7 100%);
-  background-size: 44px 44px, auto;
+    linear-gradient(90deg, rgba(31, 34, 29, 0.045) 1px, transparent 1px),
+    linear-gradient(180deg, #f7f4ea 0%, #ece7d8 48%, #f5f1e6 100%);
+  background-size: 56px 56px, auto;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --paper: #f4f7f1;
-  --ink: #17201b;
-  --text-soft: #64706a;
-  --text-muted: #87928d;
-  --accent: #b56e1f;
-  --accent-strong: #7a4312;
-  --positive: #1f7a57;
-  --positive-strong: #15543d;
-  --info: #3d6f8e;
-  --danger: #b23b34;
-  --danger-strong: #762720;
+  --paper: #f7f4ea;
+  --ink: #161714;
+  --ink-panel: #20231e;
+  --text-soft: #66685d;
+  --text-muted: #8d8c7f;
+  --accent: #b08a45;
+  --accent-strong: #74551f;
+  --positive: #14785f;
+  --positive-strong: #0b5441;
+  --info: #465f75;
+  --danger: #b0443e;
+  --danger-strong: #792a26;
 
-  --border-strong: rgba(23, 32, 27, 0.24);
-  --border-subtle: rgba(23, 32, 27, 0.14);
-  --border-faint: rgba(23, 32, 27, 0.08);
-  --border-input: rgba(23, 32, 27, 0.22);
-  --border-mild: rgba(23, 32, 27, 0.18);
+  --border-strong: rgba(22, 23, 20, 0.24);
+  --border-subtle: rgba(22, 23, 20, 0.13);
+  --border-faint: rgba(22, 23, 20, 0.075);
+  --border-input: rgba(22, 23, 20, 0.2);
+  --border-mild: rgba(22, 23, 20, 0.16);
 
-  --surface-card: #fffdf7;
-  --surface-input: #fffef9;
-  --surface-topbar: rgba(255, 253, 247, 0.86);
-  --surface-dialog: #fffdf7;
-  --surface-panel-nested: #f8f7ef;
-  --surface-toggle: #f0f3ec;
-  --surface-overlay: rgba(20, 30, 25, 0.54);
-  --surface-calendar: #fbfaf4;
-  --surface-raised: #fffdf7;
+  --surface-card: rgba(255, 252, 244, 0.92);
+  --surface-input: #fffdf6;
+  --surface-topbar: rgba(255, 252, 244, 0.82);
+  --surface-dialog: #fffaf1;
+  --surface-panel-nested: rgba(250, 247, 238, 0.88);
+  --surface-toggle: rgba(244, 240, 229, 0.92);
+  --surface-overlay: rgba(18, 19, 17, 0.58);
+  --surface-calendar: rgba(255, 252, 244, 0.78);
+  --surface-raised: rgba(255, 252, 244, 0.96);
 
-  --shadow-panel: 0 18px 50px rgba(23, 32, 27, 0.08);
-  --shadow-dialog: 0 28px 90px rgba(23, 32, 27, 0.2);
-  --shadow-topbar: 0 16px 44px rgba(23, 32, 27, 0.08);
+  --shadow-panel: 0 22px 70px rgba(24, 22, 18, 0.09);
+  --shadow-dialog: 0 34px 110px rgba(24, 22, 18, 0.24);
+  --shadow-topbar: 0 18px 55px rgba(24, 22, 18, 0.1);
 
   --radius-sm: 0.35rem;
   --radius-md: 0.5rem;
