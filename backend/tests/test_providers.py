@@ -282,6 +282,60 @@ async def test_gate_provider_collects_spot_balances(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_gate_provider_collects_contract_margin_balance_from_total_and_unrealized_pnl(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.gate import GateProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.gateio.ws/api/v4/futures/usdt/accounts",
+        json={"total": "1000", "unrealised_pnl": "-350"},
+    )
+    provider = GateProvider(
+        channel_name="Gate",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000",
+    )
+
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk is not None
+    assert risk.wallet_balance == Decimal("1000")
+    assert risk.margin_balance == Decimal("650")
+    assert risk.unrealized_pnl == Decimal("-350")
+    assert risk.risk_percent == Decimal("65.00000000")
+
+
+@pytest.mark.asyncio
+async def test_gate_provider_prefers_cross_margin_balance_for_contract_margin_risk(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.gate import GateProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.gateio.ws/api/v4/futures/usdt/accounts",
+        json={"total": "1000", "unrealised_pnl": "-350", "cross_margin_balance": "720"},
+    )
+    provider = GateProvider(
+        channel_name="Gate",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000",
+    )
+
+    risk = await provider.collect_contract_margin_balance()
+
+    assert risk is not None
+    assert risk.wallet_balance == Decimal("1000")
+    assert risk.margin_balance == Decimal("720")
+    assert risk.unrealized_pnl == Decimal("-350")
+    assert risk.risk_percent == Decimal("72.00000000")
+
+
+@pytest.mark.asyncio
 async def test_okx_provider_collects_trading_balances(httpx_mock) -> None:
     from profits_check_backend.providers.okx import OkxProvider
 
@@ -555,7 +609,7 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
 
     snapshot = await provider.collect_snapshot()
 
-    assert snapshot.total_value_usd == Decimal("2500")
+    assert snapshot.total_value_usd == Decimal("3778.273049974749177")
     strategy_assets = [asset for asset in snapshot.assets if asset.metadata["type"].startswith("strategy_")]
     assert {asset.metadata["type"] for asset in strategy_assets} == {
         "strategy_grid",
@@ -580,6 +634,86 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
         and asset.value_usd == Decimal("52")
         for asset in strategy_assets
     )
+
+
+@pytest.mark.asyncio
+async def test_okx_provider_keeps_trading_balances_when_strategy_collection_fails(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/account/balance",
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "totalEq": "2500",
+                    "details": [
+                        {"ccy": "USDT", "eq": "2500", "eqUsd": "2500"},
+                    ],
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/grid/orders-algo-pending"
+            "?algoOrdType=grid&limit=100"
+        ),
+        json={"code": "50011", "msg": "APIKey does not have permission", "data": []},
+    )
+    for algo_ord_type in ("contract_grid",):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                "https://www.okx.com/api/v5/tradingBot/grid/orders-algo-pending"
+                f"?algoOrdType={algo_ord_type}&limit=100"
+            ),
+            json={"code": "0", "data": []},
+        )
+    for algo_ord_type in ("spot_dca", "contract_dca"):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list"
+                f"?algoOrdType={algo_ord_type}&limit=100"
+            ),
+            json={"code": "0", "data": []},
+        )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/tradingBot/signal/orders-algo-pending"
+            "?algoOrdType=contract&limit=100"
+        ),
+        json={"code": "0", "data": []},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-pending?limit=100",
+        json={"code": "0", "data": []},
+    )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.total_value_usd == Decimal("2500")
+    assert snapshot.assets == [
+        AssetBalance(
+            asset_symbol="USDT",
+            quantity=Decimal("2500"),
+            value_usd=Decimal("2500"),
+            metadata={"source": "okx", "type": "trading"},
+        )
+    ]
 
 
 @pytest.mark.asyncio

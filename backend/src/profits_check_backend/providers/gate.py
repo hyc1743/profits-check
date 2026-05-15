@@ -111,9 +111,10 @@ class GateProvider(Provider):
             response = await client.get(f"{base_url}{path}", headers=headers)
             response.raise_for_status()
             payload = response.json()
-        margin_balance = Decimal(str(payload.get("total", "0")))
+        wallet_balance = Decimal(str(payload.get("total", "0")))
         unrealized_pnl = Decimal(str(payload.get("unrealised_pnl", "0")))
-        wallet_balance = margin_balance - unrealized_pnl
+        cross_margin_balance = _optional_decimal(payload.get("cross_margin_balance"))
+        margin_balance = cross_margin_balance or wallet_balance + unrealized_pnl
         if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
             return None
         return ContractMarginBalanceRisk(

@@ -86,7 +86,9 @@ class OkxProvider(Provider):
                         metadata={"source": "okx", "type": "trading"},
                     )
                 )
-            assets.extend(await self._collect_strategy_assets(client, base_url))
+            strategy_assets = await self._collect_strategy_assets(client, base_url)
+            assets.extend(strategy_assets)
+            total_value += _strategy_snapshot_total_value_usd(strategy_assets)
             return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
     async def collect_contract_positions(self) -> list[ContractPositionRisk]:
@@ -201,62 +203,83 @@ class OkxProvider(Provider):
 
     async def _collect_strategy_assets(self, client, base_url: str) -> list[AssetBalance]:
         assets: list[AssetBalance] = []
-        assets.extend(await self._collect_grid_strategy_assets(client, base_url))
-        assets.extend(await self._collect_dca_strategy_assets(client, base_url))
-        assets.extend(await self._collect_signal_strategy_assets(client, base_url))
-        assets.extend(await self._collect_recurring_strategy_assets(client, base_url))
+        # Trading bot permissions are separate from account balance permissions. A strategy
+        # endpoint failure must not hide the main OKX trading account from portfolio totals.
+        collectors = (
+            self._collect_grid_strategy_assets,
+            self._collect_dca_strategy_assets,
+            self._collect_signal_strategy_assets,
+            self._collect_recurring_strategy_assets,
+        )
+        for collector in collectors:
+            try:
+                assets.extend(await collector(client, base_url))
+            except Exception:
+                continue
         return assets
 
     async def _collect_grid_strategy_assets(self, client, base_url: str) -> list[AssetBalance]:
         assets: list[AssetBalance] = []
         path = "/api/v5/tradingBot/grid/orders-algo-pending"
         for algo_ord_type in OKX_GRID_STRATEGY_TYPES:
-            payload = await self._get_okx(
-                client, base_url, path, {"algoOrdType": algo_ord_type, "limit": "100"}
-            )
+            try:
+                payload = await self._get_okx(
+                    client, base_url, path, {"algoOrdType": algo_ord_type, "limit": "100"}
+                )
+            except Exception:
+                continue
             for item in payload.get("data", []):
                 if not isinstance(item, dict):
                     continue
                 assets.append(_strategy_asset(item, f"strategy_{algo_ord_type}"))
                 if algo_ord_type == "contract_grid":
-                    assets.extend(
-                        await self._collect_strategy_positions(
-                            client=client,
-                            base_url=base_url,
-                            path="/api/v5/tradingBot/grid/positions",
-                            params={
-                                "algoId": str(item.get("algoId", "")),
-                                "algoOrdType": algo_ord_type,
-                            },
-                            metadata_type="strategy_contract_grid_position",
+                    try:
+                        assets.extend(
+                            await self._collect_strategy_positions(
+                                client=client,
+                                base_url=base_url,
+                                path="/api/v5/tradingBot/grid/positions",
+                                params={
+                                    "algoId": str(item.get("algoId", "")),
+                                    "algoOrdType": algo_ord_type,
+                                },
+                                metadata_type="strategy_contract_grid_position",
+                            )
                         )
-                    )
+                    except Exception:
+                        continue
         return assets
 
     async def _collect_dca_strategy_assets(self, client, base_url: str) -> list[AssetBalance]:
         assets: list[AssetBalance] = []
         path = "/api/v5/tradingBot/dca/ongoing-list"
         for algo_ord_type in OKX_DCA_STRATEGY_TYPES:
-            payload = await self._get_okx(
-                client, base_url, path, {"algoOrdType": algo_ord_type, "limit": "100"}
-            )
+            try:
+                payload = await self._get_okx(
+                    client, base_url, path, {"algoOrdType": algo_ord_type, "limit": "100"}
+                )
+            except Exception:
+                continue
             for item in payload.get("data", []):
                 if not isinstance(item, dict):
                     continue
                 assets.append(_strategy_asset(item, f"strategy_{algo_ord_type}"))
                 if algo_ord_type == "contract_dca":
-                    assets.extend(
-                        await self._collect_strategy_positions(
-                            client=client,
-                            base_url=base_url,
-                            path="/api/v5/tradingBot/dca/position-details",
-                            params={
-                                "algoId": str(item.get("algoId", "")),
-                                "algoOrdType": algo_ord_type,
-                            },
-                            metadata_type="strategy_contract_dca_position",
+                    try:
+                        assets.extend(
+                            await self._collect_strategy_positions(
+                                client=client,
+                                base_url=base_url,
+                                path="/api/v5/tradingBot/dca/position-details",
+                                params={
+                                    "algoId": str(item.get("algoId", "")),
+                                    "algoOrdType": algo_ord_type,
+                                },
+                                metadata_type="strategy_contract_dca_position",
+                            )
                         )
-                    )
+                    except Exception:
+                        continue
         return assets
 
     async def _collect_signal_strategy_assets(self, client, base_url: str) -> list[AssetBalance]:
@@ -303,7 +326,9 @@ class OkxProvider(Provider):
             detail_items = [
                 detail for detail in detail_payload.get("data", []) if isinstance(detail, dict)
             ]
-            assets.append(_strategy_asset(detail_items[0] if detail_items else item, "strategy_recurring"))
+            assets.append(
+                _strategy_asset(detail_items[0] if detail_items else item, "strategy_recurring")
+            )
         return assets
 
     async def _collect_strategy_positions(
@@ -378,6 +403,17 @@ def _strategy_asset(item: dict[str, object], metadata_type: str) -> AssetBalance
         value_usd=value_usd,
         metadata=_strategy_metadata(item, metadata_type),
     )
+
+
+def _strategy_snapshot_total_value_usd(assets: list[AssetBalance]) -> Decimal:
+    total = Decimal("0")
+    for asset in assets:
+        asset_type = asset.metadata.get("type", "")
+        if not asset_type.startswith("strategy_") or asset_type.endswith("_position"):
+            continue
+        if asset.value_usd is not None:
+            total += asset.value_usd
+    return total
 
 
 def _strategy_position_asset(item: dict[str, object], metadata_type: str) -> AssetBalance:
