@@ -120,7 +120,7 @@ function formatSnapshotTime(value: string) {
   return d.toISOString().replace('T', ' ').slice(0, 19)
 }
 
-function formatPercent(value: string | number | null | undefined, digits = 4) {
+function formatPercent(value: string | number | null | undefined) {
   if (value === null || value === undefined) {
     return '不可用'
   }
@@ -128,7 +128,7 @@ function formatPercent(value: string | number | null | undefined, digits = 4) {
   if (Number.isNaN(numeric)) {
     return '不可用'
   }
-  return `${numeric.toFixed(digits)}%`
+  return `${Math.round(numeric)}%`
 }
 
 function formatLiquidationRiskPercent(value: string | number | null | undefined) {
@@ -168,6 +168,14 @@ function humanizeAlertStatus(value: string | null | undefined) {
 function formatFrequency(seconds: number) {
   if (seconds < 60) return `${seconds} 秒`
   return `${Math.round(seconds / 60)} 分钟`
+}
+
+function formatIntegerInputValue(value: string | number | null | undefined, fallback: string) {
+  if (value === null || value === undefined || value === '') {
+    return fallback
+  }
+  const numeric = typeof value === 'number' ? value : Number(value)
+  return Number.isNaN(numeric) ? fallback : String(Math.round(numeric))
 }
 
 function getEntryMonths(entries: Array<{ dateKey: string }>) {
@@ -376,6 +384,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
   const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
+  const hasAutoRefreshedLiquidationMonitor = useRef(false)
 
   const summaryQuery = useQuery({ queryKey: ['summary'], queryFn: api.getLatestSummary })
   const liveSummaryQuery = useQuery({
@@ -433,13 +442,26 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   })
 
   const refreshLiquidationMonitorMutation = useMutation({
-    mutationFn: api.refreshLiquidationMonitor,
-    onSuccess: (result) => {
+    mutationFn: (variables?: { silent?: boolean }) => {
+      void variables
+      return api.refreshLiquidationMonitor()
+    },
+    onSuccess: (result, variables) => {
       queryClient.setQueryData(['liquidation-monitor'], result)
-      setNotice(`爆仓风险已刷新，触发提醒 ${result.alertCount ?? 0} 条。`)
+      if (!variables?.silent) {
+        setNotice(`爆仓风险已刷新，触发提醒 ${result.alertCount ?? 0} 条。`)
+      }
     },
     onError: (error) => setNotice(error.message),
   })
+
+  useEffect(() => {
+    if (hasAutoRefreshedLiquidationMonitor.current) {
+      return
+    }
+    hasAutoRefreshedLiquidationMonitor.current = true
+    refreshLiquidationMonitorMutation.mutate({ silent: true })
+  }, [refreshLiquidationMonitorMutation])
 
   const liquidationMonitorMutation = useMutation({
     mutationFn: api.updateLiquidationMonitor,
@@ -983,7 +1005,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             <LiquidationRiskPanel
               monitor={liquidationMonitorQuery.data}
               isRefreshing={refreshLiquidationMonitorMutation.isPending}
-              onRefresh={() => refreshLiquidationMonitorMutation.mutate()}
+              onRefresh={() => refreshLiquidationMonitorMutation.mutate(undefined)}
             />
           ) : null}
 
@@ -993,8 +1015,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
               <span>渠道占比与账户类别。</span>
             </div>
             <div className="distribution-grid">
-              <div className="distribution-chart">
-                <h4>渠道占比</h4>
+              <details className="distribution-chart">
+                <summary>
+                  <h4>渠道占比</h4>
+                </summary>
                 {channelShareItems.length > 0 ? (
                   <>
                     <ChartSurface
@@ -1007,7 +1031,8 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                             radius: ['55%', '78%'],
                             label: {
                               color: chartPalette.ink,
-                              formatter: '{b} {d}%',
+                              formatter: (params: { name?: string; percent?: number }) =>
+                                `${params.name ?? ''} ${Math.round(Number(params.percent ?? 0))}%`,
                             },
                             data:
                               channelShareItems.map((channel) => ({
@@ -1031,9 +1056,11 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                 ) : (
                   <p className="empty-copy">暂无渠道占比数据。</p>
                 )}
-              </div>
-              <div className="account-list">
-                <h4>按账户类别</h4>
+              </details>
+              <details className="account-list">
+                <summary>
+                  <h4>按账户类别</h4>
+                </summary>
                 {(displayData?.accountCategoryTotals ?? []).map((item) => (
                   <div key={`${item.channelName}-${item.accountScope}`} className="account-row">
                     <div>
@@ -1046,7 +1073,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                 {(displayData?.accountCategoryTotals ?? []).length === 0 ? (
                   <p className="empty-copy">暂无账户分类数据。</p>
                 ) : null}
-              </div>
+              </details>
             </div>
           </div>
         </article>
@@ -1729,9 +1756,12 @@ function LiquidationMonitorForm({
     resolver: zodResolver(liquidationMonitorSchema),
     defaultValues: {
       positionMonitorEnabled: config?.positionMonitorEnabled ?? config?.monitorEnabled ?? false,
-      positionThresholdPercent: config?.positionThresholdPercent ?? config?.thresholdPercent ?? '5',
+      positionThresholdPercent: formatIntegerInputValue(
+        config?.positionThresholdPercent ?? config?.thresholdPercent,
+        '5',
+      ),
       marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
-      marginBalanceThresholdPercent: config?.marginBalanceThresholdPercent ?? '70',
+      marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
@@ -1742,9 +1772,12 @@ function LiquidationMonitorForm({
   useEffect(() => {
     reset({
       positionMonitorEnabled: config?.positionMonitorEnabled ?? config?.monitorEnabled ?? false,
-      positionThresholdPercent: config?.positionThresholdPercent ?? config?.thresholdPercent ?? '5',
+      positionThresholdPercent: formatIntegerInputValue(
+        config?.positionThresholdPercent ?? config?.thresholdPercent,
+        '5',
+      ),
       marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
-      marginBalanceThresholdPercent: config?.marginBalanceThresholdPercent ?? '70',
+      marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',

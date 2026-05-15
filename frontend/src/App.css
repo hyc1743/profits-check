@@ -9,9 +9,9 @@
   position: fixed;
   inset: 0;
   background:
-    linear-gradient(135deg, rgba(176, 138, 69, 0.2), transparent 30rem),
-    linear-gradient(315deg, rgba(20, 120, 95, 0.14), transparent 34rem),
-    linear-gradient(180deg, rgba(255, 252, 244, 0.34), transparent 18rem);
+    linear-gradient(135deg, rgba(78, 245, 178, 0.12), transparent 30rem),
+    linear-gradient(315deg, rgba(244, 193, 93, 0.1), transparent 34rem),
+    linear-gradient(180deg, rgba(216, 231, 218, 0.03), transparent 18rem);
   pointer-events: none;
 }
 
@@ -41,9 +41,9 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(180deg, rgba(32, 35, 30, 0.98), rgba(21, 22, 20, 0.96)),
+    linear-gradient(180deg, rgba(14, 20, 15, 0.98), rgba(8, 12, 9, 0.96)),
     var(--ink-panel);
-  box-shadow: 0 28px 80px rgba(20, 18, 14, 0.22);
+  box-shadow: 0 28px 80px rgba(4, 8, 5, 0.48);
   backdrop-filter: blur(14px);
 }
 
@@ -52,11 +52,11 @@
   place-items: center;
   width: 3.2rem;
   aspect-ratio: 1;
-  border: 1px solid rgba(176, 138, 69, 0.62);
+  border: 1px solid rgba(78, 245, 178, 0.58);
   background:
-    linear-gradient(135deg, rgba(176, 138, 69, 0.24), rgba(255, 252, 244, 0.04)),
-    #171814;
-  color: #f8efd9;
+    linear-gradient(135deg, rgba(78, 245, 178, 0.18), rgba(244, 193, 93, 0.08)),
+    #0b100c;
+  color: var(--accent-strong);
   font-weight: 800;
 }
 
@@ -70,10 +70,10 @@
   display: grid;
   place-items: center;
   min-height: 2.85rem;
-  border: 1px solid rgba(248, 239, 217, 0.1);
+  border: 1px solid rgba(122, 255, 196, 0.12);
   border-radius: var(--radius-md);
-  background: rgba(255, 252, 244, 0.045);
-  color: rgba(248, 239, 217, 0.72);
+  background: rgba(78, 245, 178, 0.045);
+  color: rgba(216, 231, 218, 0.72);
   font-size: 0.78rem;
   font-weight: 700;
   text-decoration: none;
@@ -81,9 +81,9 @@
 
 .rail-nav a:hover,
 .rail-nav a:focus-visible {
-  border-color: rgba(176, 138, 69, 0.65);
-  background: rgba(176, 138, 69, 0.12);
-  color: #f8efd9;
+  border-color: rgba(78, 245, 178, 0.6);
+  background: rgba(78, 245, 178, 0.11);
+  color: var(--accent-strong);
 }
 
 .rail-status {
@@ -93,7 +93,7 @@
 }
 
 .rail-status span {
-  color: rgba(248, 239, 217, 0.52);
+  color: rgba(216, 231, 218, 0.52);
   font-size: 0.64rem;
   text-transform: uppercase;
 }
@@ -106,10 +106,10 @@
   margin-bottom: 1rem;
   padding: clamp(1rem, 2vw, 1.6rem);
   border: 1px solid var(--border-subtle);
-  border-color: rgba(176, 138, 69, 0.18);
+  border-color: rgba(78, 245, 178, 0.2);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(135deg, rgba(255, 252, 244, 0.92), rgba(246, 240, 225, 0.78)),
+    linear-gradient(135deg, rgba(18, 29, 21, 0.92), rgba(10, 16, 12, 0.82)),
     var(--surface-topbar);
   box-shadow: var(--shadow-topbar);
   backdrop-filter: blur(14px);
@@ -177,7 +177,7 @@
 
 .overview-panel {
   background:
-    linear-gradient(180deg, rgba(255, 252, 244, 0.96), rgba(255, 252, 244, 0.86)),
+    linear-gradient(180deg, rgba(20, 31, 23, 0.96), rgba(11, 17, 12, 0.88)),
     var(--surface-card);
 }
 
@@ -214,6 +214,7 @@
 .kicker {
   margin: 0 0 0.32rem;
   color: var(--accent-strong);
+  font-family: 'IBM Plex Mono', monospace;
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -232,27 +233,27 @@
   gap: 0.25rem;
   min-width: 0;
   padding: 0.9rem 1rem;
-  border-color: rgba(176, 138, 69, 0.14);
+  border-color: rgba(78, 245, 178, 0.14);
   border-radius: var(--radius-md);
   box-shadow: none;
 }
 
 .system-strip .metric-card:first-child,
 .mini-metrics .metric-card:first-child {
-  border-color: rgba(176, 138, 69, 0.38);
+  border-color: rgba(78, 245, 178, 0.42);
   background:
-    linear-gradient(135deg, rgba(32, 35, 30, 0.98), rgba(45, 43, 35, 0.94)),
+    linear-gradient(135deg, rgba(8, 13, 9, 0.98), rgba(18, 34, 24, 0.94)),
     var(--ink-panel);
 }
 
 .system-strip .metric-card:first-child span,
 .mini-metrics .metric-card:first-child span {
-  color: rgba(248, 239, 217, 0.7);
+  color: rgba(216, 231, 218, 0.68);
 }
 
 .system-strip .metric-card:first-child strong,
 .mini-metrics .metric-card:first-child strong {
-  color: #f8efd9;
+  color: var(--accent-strong);
 }
 
 .metric-card span,
@@ -267,6 +268,7 @@
 .metric-card strong {
   overflow-wrap: anywhere;
   color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
   font-size: clamp(1rem, 2vw, 1.35rem);
   font-variant-numeric: tabular-nums;
   line-height: 1.12;
@@ -275,10 +277,10 @@
 .notice {
   margin: 0 0 1rem;
   padding: 0.8rem 1rem;
-  border: 1px solid rgba(176, 138, 69, 0.3);
+  border: 1px solid rgba(244, 193, 93, 0.34);
   border-radius: var(--radius-md);
-  background: rgba(255, 247, 226, 0.92);
-  color: var(--accent-strong);
+  background: rgba(244, 193, 93, 0.1);
+  color: var(--warning);
   font-weight: 700;
 }
 
@@ -295,7 +297,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(180deg, rgba(255, 252, 244, 0.96), rgba(246, 240, 225, 0.9)),
+    linear-gradient(180deg, rgba(20, 31, 23, 0.96), rgba(11, 17, 12, 0.9)),
     var(--surface-card);
   box-shadow: var(--shadow-dialog);
 }
@@ -347,7 +349,7 @@
 .distribution-block {
   margin-top: 1.1rem;
   padding-top: 1.1rem;
-  border-top: 1px solid rgba(176, 138, 69, 0.16);
+  border-top: 1px solid rgba(78, 245, 178, 0.14);
 }
 
 .chart-block {
@@ -437,8 +439,8 @@
 }
 
 .risk-tabs button.active {
-  border-color: rgba(20, 120, 95, 0.36);
-  background: rgba(20, 120, 95, 0.1);
+  border-color: rgba(78, 245, 178, 0.36);
+  background: rgba(78, 245, 178, 0.1);
   color: var(--positive-strong);
 }
 
@@ -465,9 +467,9 @@
 .risk-alert {
   justify-self: end;
   padding: 0.32rem 0.58rem;
-  border: 1px solid rgba(61, 111, 142, 0.24);
+  border: 1px solid rgba(132, 182, 255, 0.28);
   border-radius: var(--radius-full);
-  background: rgba(70, 95, 117, 0.08);
+  background: rgba(132, 182, 255, 0.08);
   color: var(--info);
   font-size: 0.78rem;
   font-weight: 700;
@@ -479,8 +481,8 @@
 }
 
 .risk-status-warning .risk-alert {
-  border-color: rgba(176, 68, 62, 0.28);
-  background: rgba(176, 68, 62, 0.08);
+  border-color: rgba(255, 107, 95, 0.3);
+  background: rgba(255, 107, 95, 0.08);
   color: var(--danger-strong);
 }
 
@@ -494,7 +496,7 @@
   gap: 0.35rem;
   min-height: 16rem;
   border-style: dashed;
-  background: rgba(255, 252, 244, 0.68);
+  background: rgba(13, 19, 14, 0.68);
   box-shadow: none;
   text-align: center;
 }
@@ -539,13 +541,13 @@
 }
 
 .calendar-day-has-value {
-  border-color: rgba(20, 120, 95, 0.38);
-  background: rgba(20, 120, 95, 0.08);
+  border-color: rgba(78, 245, 178, 0.38);
+  background: rgba(78, 245, 178, 0.08);
 }
 
 .profit-day {
-  border-color: rgba(176, 138, 69, 0.38);
-  background: rgba(176, 138, 69, 0.1);
+  border-color: rgba(244, 193, 93, 0.38);
+  background: rgba(244, 193, 93, 0.1);
 }
 
 .calendar-day-empty {
@@ -641,6 +643,7 @@
   padding: 0.68rem 0.95rem;
   border: 1px solid transparent;
   border-radius: var(--radius-full);
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 800;
   transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
 }
@@ -658,16 +661,16 @@
 }
 
 .button-primary {
-  border-color: rgba(248, 239, 217, 0.12);
+  border-color: rgba(78, 245, 178, 0.42);
   background:
-    linear-gradient(135deg, var(--ink-panel), #121310);
-  color: #f8efd9;
-  box-shadow: 0 12px 26px rgba(22, 23, 20, 0.18);
+    linear-gradient(135deg, rgba(78, 245, 178, 0.18), rgba(8, 13, 9, 0.96));
+  color: var(--accent-strong);
+  box-shadow: 0 12px 30px rgba(78, 245, 178, 0.1);
 }
 
 .button-secondary {
-  border-color: rgba(20, 120, 95, 0.38);
-  background: rgba(20, 120, 95, 0.1);
+  border-color: rgba(78, 245, 178, 0.34);
+  background: rgba(78, 245, 178, 0.09);
   color: var(--positive-strong);
 }
 
@@ -675,18 +678,18 @@
 .settings-button {
   border-color: var(--border-strong);
   background:
-    linear-gradient(180deg, rgba(255, 252, 244, 0.96), rgba(246, 240, 225, 0.86));
+    linear-gradient(180deg, rgba(21, 31, 23, 0.96), rgba(9, 14, 10, 0.9));
   color: var(--ink);
 }
 
 .button-danger {
   background: var(--danger);
-  color: var(--surface-card);
+  color: #fff3f1;
 }
 
 .button-danger-ghost {
-  border-color: rgba(176, 68, 62, 0.44);
-  background: rgba(176, 68, 62, 0.06);
+  border-color: rgba(255, 107, 95, 0.44);
+  background: rgba(255, 107, 95, 0.06);
   color: var(--danger-strong);
 }
 
@@ -741,9 +744,10 @@ details[open] summary::before {
 .field-switch-notice {
   margin: 0 0 0.6rem;
   padding: 0.5rem 0.75rem;
-  border-left: 3px solid var(--accent);
-  background: rgba(255, 247, 226, 0.92);
-  color: var(--accent-strong);
+  border: 1px solid rgba(244, 193, 93, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(244, 193, 93, 0.1);
+  color: var(--warning);
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -767,7 +771,7 @@ details[open] summary::before {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(180deg, rgba(255, 250, 241, 0.98), rgba(247, 242, 231, 0.98)),
+    linear-gradient(180deg, rgba(18, 27, 20, 0.98), rgba(10, 15, 11, 0.98)),
     var(--surface-dialog);
   box-shadow: var(--shadow-dialog);
 }
@@ -790,12 +794,12 @@ details[open] summary::before {
 
 .settings-body .panel {
   border-color: var(--border-faint);
-  background: rgba(255, 252, 244, 0.58);
+  background: rgba(18, 27, 20, 0.72);
   box-shadow: none;
 }
 
 .danger-zone {
-  border-color: rgba(176, 68, 62, 0.3) !important;
+  border-color: rgba(255, 107, 95, 0.3) !important;
 }
 
 .danger-zone p {

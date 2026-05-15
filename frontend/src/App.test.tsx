@@ -243,11 +243,10 @@ test('renders dashboard data and latest snapshot detail', async () => {
   expect(screen.getByText('按账户类别')).toBeInTheDocument()
   expect(screen.getByText('资产走势')).toBeInTheDocument()
   expect(screen.getByText('资产分布')).toBeInTheDocument()
-  expect(screen.getByText('BSC Wallets · wallet:0x1111')).toBeInTheDocument()
   expect(screen.getByText('渠道占比与账户类别。')).toBeInTheDocument()
   expect(screen.getByRole('table', { name: '资产走势数据' })).toBeInTheDocument()
-  expect(screen.getByRole('list', { name: '渠道占比数据' })).toBeInTheDocument()
-  expect(screen.getByText('100%')).toBeInTheDocument()
+  expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
+  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
 
   const totalAssetMetric = screen.getAllByText('总资产')[0].closest('.metric-card')
   const trendHeading = screen.getByRole('heading', { name: '资产走势' })
@@ -257,6 +256,27 @@ test('renders dashboard data and latest snapshot detail', async () => {
   expect(totalAssetMetric?.compareDocumentPosition(trendHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   expect(trendHeading.compareDocumentPosition(channelShareHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   expect(channelShareHeading.compareDocumentPosition(accountHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+})
+
+test('keeps asset distribution details collapsed until opened', async () => {
+  installHandlers()
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
+  expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
+  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
+
+  await user.click(screen.getByText('渠道占比'))
+
+  expect(screen.getByRole('list', { name: '渠道占比数据' })).toBeVisible()
+  expect(screen.getByText('100%')).toBeInTheDocument()
+  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
+
+  await user.click(screen.getByText('按账户类别'))
+
+  expect(screen.getByText('BSC Wallets · wallet:0x1111')).toBeVisible()
 })
 
 test('live refresh shows account categories', async () => {
@@ -286,14 +306,16 @@ test('shows liquidation risk positions and can refresh them', async () => {
   render(<App />)
 
   expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
+  await waitFor(() => expect(refreshCount).toBe(1))
   expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
-  expect(screen.getByText('0.1721%')).toBeInTheDocument()
+  expect(screen.getByText('0%')).toBeInTheDocument()
+  expect(screen.queryByText('0.1721%')).not.toBeInTheDocument()
   expect(screen.getByText('58100.00 USD')).toBeInTheDocument()
   expect(screen.getByText('58000.00 USD')).toBeInTheDocument()
   expect(screen.getByText('已提醒')).toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
-  await waitFor(() => expect(refreshCount).toBe(1))
+  await waitFor(() => expect(refreshCount).toBe(2))
 })
 
 test('switches liquidation risk panel to margin balance risk by channel', async () => {
@@ -307,30 +329,31 @@ test('switches liquidation risk panel to margin balance risk by channel', async 
 
   expect(screen.getByLabelText('爆仓风险保证金余额')).toBeInTheDocument()
   expect(screen.getByText('主账户 · Binance')).toBeInTheDocument()
-  expect(screen.getByText('65.0000%')).toBeInTheDocument()
+  expect(screen.getByText('65%')).toBeInTheDocument()
+  expect(screen.queryByText('65.0000%')).not.toBeInTheDocument()
   expect(screen.getByText('1000.00 USD')).toBeInTheDocument()
   expect(screen.getByText('650.00 USD')).toBeInTheDocument()
 })
 
 test('shows infinity and no-risk copy when liquidation price is unavailable', async () => {
   installHandlers()
+  const unavailableLiquidationMonitorPayload = {
+    ...liquidationMonitorPayload,
+    positions: [
+      {
+        ...liquidationMonitorPayload.positions[0],
+        id: 2,
+        side: 'BOTH',
+        liquidationPrice: null,
+        distancePercent: null,
+        status: 'unavailable',
+        lastAlertStatus: null,
+      },
+    ],
+  }
   server.use(
-    http.get('/api/liquidation-monitor', () =>
-      HttpResponse.json({
-        ...liquidationMonitorPayload,
-        positions: [
-          {
-            ...liquidationMonitorPayload.positions[0],
-            id: 2,
-            side: 'BOTH',
-            liquidationPrice: null,
-            distancePercent: null,
-            status: 'unavailable',
-            lastAlertStatus: null,
-          },
-        ],
-      }),
-    ),
+    http.get('/api/liquidation-monitor', () => HttpResponse.json(unavailableLiquidationMonitorPayload)),
+    http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(unavailableLiquidationMonitorPayload)),
   )
 
   render(<App />)
@@ -372,6 +395,8 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
   await user.click(screen.getByLabelText('开启仓位风险监控'))
   await user.click(screen.getByLabelText('开启保证金余额监控'))
   expect(screen.queryByLabelText('开启电话提醒')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('仓位风险阈值')).toHaveValue(5)
+  expect(screen.getByLabelText('保证金余额阈值')).toHaveValue(70)
   await user.clear(screen.getByLabelText('仓位风险阈值'))
   await user.type(screen.getByLabelText('仓位风险阈值'), '2')
   await user.clear(screen.getByLabelText('保证金余额阈值'))
