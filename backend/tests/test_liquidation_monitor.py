@@ -264,6 +264,11 @@ def test_manual_refresh_collects_margin_balance_risk_by_channel(client) -> None:
         }
     ]
 
+    get_response = client.get("/api/liquidation-monitor")
+
+    assert get_response.status_code == 200
+    assert get_response.json()["marginBalances"] == payload["marginBalances"]
+
 
 def test_manual_refresh_triggers_miaotixing_when_alerts_enabled(client, httpx_mock) -> None:
     class StubProvider:

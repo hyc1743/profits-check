@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from profits_check_backend.models import Channel, LiquidationPosition
+from profits_check_backend.models import Channel, LiquidationMarginBalance, LiquidationPosition
 from profits_check_backend.providers.base import ContractMarginBalanceRisk, ContractPositionRisk
 from profits_check_backend.providers.http import provider_http_client
 from profits_check_backend.security import SecretCipher
@@ -165,7 +165,7 @@ async def run_liquidation_monitor(
     config = load_liquidation_monitor_config(session, cipher)
     now = now or datetime.now(UTC)
     positions: list[LiquidationPosition] = []
-    margin_balances: list[dict[str, object]] = []
+    margin_balances: list[LiquidationMarginBalance] = []
     alert_count = 0
     failure_count = 0
 
@@ -173,7 +173,13 @@ async def run_liquidation_monitor(
         (item.channel_id, item.symbol, item.side): item
         for item in session.scalars(select(LiquidationPosition))
     }
+    existing_margin_balances = {
+        item.channel_id: item for item in session.scalars(select(LiquidationMarginBalance))
+    }
     seen_keys: set[tuple[int, str, str]] = set()
+    seen_margin_balance_channel_ids: set[int] = set()
+    checked_margin_balance_channel_ids: set[int] = set()
+    active_channel_ids = {channel.id for channel in channels}
 
     for channel in channels:
         if channel.provider not in MONITORED_PROVIDERS:
@@ -195,6 +201,7 @@ async def run_liquidation_monitor(
             provider_margin_balance = (
                 await collect_margin_balance() if collect_margin_balance is not None else None
             )
+            checked_margin_balance_channel_ids.add(channel.id)
         except Exception:
             failure_count += 1
             provider_margin_balance = None
@@ -231,34 +238,41 @@ async def run_liquidation_monitor(
             positions.append(model)
 
         if provider_margin_balance is not None:
-            margin_payload = margin_balance_payload(
+            margin_model = upsert_liquidation_margin_balance(
+                session=session,
                 channel=channel,
                 risk=provider_margin_balance,
                 threshold_percent=config.margin_balance_threshold_percent,
+                existing=existing_margin_balances,
+                now=now,
             )
+            seen_margin_balance_channel_ids.add(channel.id)
             if (
                 config.margin_balance_monitor_enabled
                 and config.alert_enabled
                 and config.miao_code
-                and margin_payload["status"] == "warning"
+                and margin_model.status == "warning"
             ):
                 alert_result = await send_miaotixing_alert(
                     config.miao_code,
                     margin_balance_alert_text(channel, provider_margin_balance),
                 )
-                margin_payload["lastAlertStatus"] = alert_result["status"]
-                margin_payload["lastAlertError"] = alert_result.get("error")
-                margin_payload["lastAlertAt"] = (
-                    now.replace(tzinfo=UTC).isoformat()
-                    if alert_result["status"] == "sent"
-                    else None
-                )
+                margin_model.last_alert_status = alert_result["status"]
+                margin_model.last_alert_error = alert_result.get("error")
+                margin_model.last_alert_at = now if alert_result["status"] == "sent" else None
                 if alert_result["status"] == "sent":
                     alert_count += 1
-            margin_balances.append(margin_payload)
+            margin_balances.append(margin_model)
 
     for key, item in existing.items():
         if key not in seen_keys:
+            session.delete(item)
+    for channel_id, item in existing_margin_balances.items():
+        if (
+            channel_id not in active_channel_ids
+            or channel_id in checked_margin_balance_channel_ids
+            and channel_id not in seen_margin_balance_channel_ids
+        ):
             session.delete(item)
 
     session.commit()
@@ -271,7 +285,10 @@ async def run_liquidation_monitor(
         "failureCount": failure_count,
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
-        "marginBalances": margin_balances,
+        "marginBalances": [
+            liquidation_margin_balance_payload(margin_balance)
+            for margin_balance in sorted(margin_balances, key=lambda item: item.id or 0)
+        ],
     }
 
 
@@ -327,6 +344,55 @@ def upsert_liquidation_position(
     return model
 
 
+def upsert_liquidation_margin_balance(
+    *,
+    session: Session,
+    channel: Channel,
+    risk: ContractMarginBalanceRisk,
+    threshold_percent: Decimal,
+    existing: dict[int, LiquidationMarginBalance],
+    now: datetime,
+) -> LiquidationMarginBalance:
+    model = existing.get(channel.id)
+    if model is None:
+        model = LiquidationMarginBalance(
+            channel_id=channel.id,
+            provider=channel.provider,
+            channel_name=channel.name,
+            wallet_balance=risk.wallet_balance,
+            margin_balance=risk.margin_balance,
+            unrealized_pnl=risk.unrealized_pnl,
+            threshold_percent=threshold_percent,
+            status="ok",
+            raw_payload_json="{}",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(model)
+        existing[channel.id] = model
+
+    risk_percent = risk.risk_percent
+    status = "unavailable"
+    if risk_percent is not None:
+        status = "warning" if risk_percent < threshold_percent else "ok"
+
+    model.provider = channel.provider
+    model.channel_name = channel.name
+    model.wallet_balance = risk.wallet_balance
+    model.margin_balance = risk.margin_balance
+    model.unrealized_pnl = risk.unrealized_pnl
+    model.risk_percent = risk_percent
+    model.threshold_percent = threshold_percent
+    model.status = status
+    model.raw_payload_json = json.dumps(risk.raw_payload)
+    model.updated_at = now
+    if status != "warning":
+        model.last_alert_status = None
+        model.last_alert_error = None
+        model.last_alert_at = None
+    return model
+
+
 def should_send_alert(
     position: LiquidationPosition, now: datetime, alert_interval_seconds: int
 ) -> bool:
@@ -353,28 +419,6 @@ def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk)
         f"{channel.name} margin balance risk. Wallet {risk.wallet_balance}, "
         f"margin balance {risk.margin_balance}, ratio {quantize_decimal(risk.risk_percent)}%."
     )
-
-
-def margin_balance_payload(
-    *, channel: Channel, risk: ContractMarginBalanceRisk, threshold_percent: Decimal
-) -> dict[str, object]:
-    risk_percent = risk.risk_percent
-    status = "unavailable" if risk_percent is None else "warning" if risk_percent < threshold_percent else "ok"
-    return {
-        "id": f"{channel.id}:margin-balance",
-        "channelId": channel.id,
-        "provider": channel.provider,
-        "channelName": channel.name,
-        "walletBalance": quantize_decimal(risk.wallet_balance),
-        "marginBalance": quantize_decimal(risk.margin_balance),
-        "unrealizedPnl": quantize_decimal(risk.unrealized_pnl),
-        "riskPercent": quantize_decimal(risk_percent),
-        "thresholdPercent": quantize_decimal(threshold_percent),
-        "status": status,
-        "lastAlertStatus": None,
-        "lastAlertError": None,
-        "lastAlertAt": None,
-    }
 
 
 async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:
@@ -420,13 +464,41 @@ def liquidation_position_payload(position: LiquidationPosition) -> dict[str, obj
     }
 
 
+def liquidation_margin_balance_payload(
+    margin_balance: LiquidationMarginBalance,
+) -> dict[str, object]:
+    return {
+        "id": f"{margin_balance.channel_id}:margin-balance",
+        "channelId": margin_balance.channel_id,
+        "provider": margin_balance.provider,
+        "channelName": margin_balance.channel_name,
+        "walletBalance": quantize_decimal(margin_balance.wallet_balance),
+        "marginBalance": quantize_decimal(margin_balance.margin_balance),
+        "unrealizedPnl": quantize_decimal(margin_balance.unrealized_pnl),
+        "riskPercent": quantize_decimal(margin_balance.risk_percent),
+        "thresholdPercent": quantize_decimal(margin_balance.threshold_percent),
+        "status": margin_balance.status,
+        "lastAlertStatus": margin_balance.last_alert_status,
+        "lastAlertError": margin_balance.last_alert_error,
+        "lastAlertAt": margin_balance.last_alert_at.replace(tzinfo=UTC).isoformat()
+        if margin_balance.last_alert_at
+        else None,
+    }
+
+
 def get_liquidation_monitor_payload(session: Session, cipher: SecretCipher) -> dict[str, object]:
     config = load_liquidation_monitor_config(session, cipher)
     positions = list(session.scalars(select(LiquidationPosition).order_by(LiquidationPosition.id)))
+    margin_balances = list(
+        session.scalars(select(LiquidationMarginBalance).order_by(LiquidationMarginBalance.id))
+    )
     return {
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
-        "marginBalances": [],
+        "marginBalances": [
+            liquidation_margin_balance_payload(margin_balance)
+            for margin_balance in margin_balances
+        ],
     }
 
 
