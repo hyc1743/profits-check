@@ -191,9 +191,7 @@ def main() -> int:
     ensure_tool("bun", "https://bun.sh/install", env)
 
     backend_host = env.get("PROFITS_CHECK_BACKEND_HOST", "127.0.0.1")
-    frontend_host = env.get("PROFITS_CHECK_FRONTEND_HOST", "127.0.0.1")
     backend_url = f"http://{backend_host}:8200"
-    frontend_url = f"http://{frontend_host}:8300"
 
     print("Installing Python 3.12 if needed...")
     run_command(["uv", "python", "install", "3.12"], ROOT, env)
@@ -217,6 +215,9 @@ def main() -> int:
         signature_paths=[FRONTEND_DIR / "package.json", FRONTEND_DIR / "bun.lock"],
     )
 
+    print("Building frontend static files...")
+    run_command(["bun", "run", "build"], FRONTEND_DIR, env)
+
     print(f"Starting backend on {backend_url}")
     backend = start_process(
         "backend",
@@ -235,15 +236,7 @@ def main() -> int:
         env,
     )
 
-    print(f"Starting frontend on {frontend_url}")
-    frontend = start_process(
-        "frontend",
-        ["bun", "run", "dev"],
-        FRONTEND_DIR,
-        env,
-    )
-
-    processes = [backend, frontend]
+    processes = [backend]
 
     def shutdown(*_: object) -> None:
         for process in processes:
@@ -252,9 +245,9 @@ def main() -> int:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print(f"Frontend: {frontend_url}")
+    print(f"Frontend build: {FRONTEND_DIR / 'dist'}")
     print(f"Backend:  {backend_url}")
-    print("Press Ctrl+C to stop both services.")
+    print("Press Ctrl+C to stop the backend.")
 
     try:
         while True:

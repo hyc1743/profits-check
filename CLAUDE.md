@@ -8,13 +8,13 @@ Profits Check is a portfolio asset tracking application — connect crypto excha
 
 ## Development Commands
 
-### Start Both Services
+### Build Frontend and Start Backend
 
 ```bash
 python run_dev.py
 ```
 
-Backend on `http://0.0.0.0:8200`, frontend on `http://0.0.0.0:8300`. Frontend proxies `/api` to backend via Vite.
+Backend on `http://127.0.0.1:8200`. The script builds the frontend into `frontend/dist`; serve that directory with Nginx and proxy `/api` to the backend.
 
 ### Backend (Python 3.12+, package manager: `uv`)
 

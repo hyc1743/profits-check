@@ -122,3 +122,55 @@ def test_sync_dependencies_installs_when_lock_changes(tmp_path, monkeypatch) -> 
 
     assert calls == [["bun", "install"]]
     assert stamp_path.read_text() == run_dev.dependency_signature([lock_file])
+
+
+def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
+    run_dev = load_run_dev()
+    commands: list[tuple[list[str], Path]] = []
+    started: list[tuple[str, list[str], Path]] = []
+
+    class FinishedProcess:
+        def poll(self) -> int:
+            return 0
+
+    monkeypatch.setattr(run_dev, "ensure_backend_env", lambda: None)
+    monkeypatch.setattr(run_dev, "build_env", lambda: {"PATH": "/tmp/bin"})
+    monkeypatch.setattr(run_dev, "ensure_tool", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        run_dev,
+        "sync_dependencies",
+        lambda **kwargs: commands.append((kwargs["command"], kwargs["cwd"])),
+    )
+    monkeypatch.setattr(
+        run_dev,
+        "run_command",
+        lambda command, cwd, _env=None: commands.append((command, cwd)),
+    )
+    monkeypatch.setattr(run_dev.signal, "signal", lambda *_args, **_kwargs: None)
+
+    def fake_start_process(name, command, cwd, _env=None):
+        started.append((name, command, cwd))
+        return FinishedProcess()
+
+    monkeypatch.setattr(run_dev, "start_process", fake_start_process)
+
+    assert run_dev.main() == 0
+
+    assert (["bun", "run", "build"], run_dev.FRONTEND_DIR) in commands
+    assert started == [
+        (
+            "backend",
+            [
+                "uv",
+                "run",
+                "uvicorn",
+                "profits_check_backend.main:create_app",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8200",
+            ],
+            run_dev.BACKEND_DIR,
+        )
+    ]
