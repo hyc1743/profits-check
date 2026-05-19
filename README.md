@@ -78,6 +78,12 @@ location /api/ {
 }
 ```
 
+如果使用宝塔生成的完整站点配置，可以参考：
+
+```text
+docs/deploy/baota-nginx.conf
+```
+
 检查并重载 Nginx：
 
 ```bash
