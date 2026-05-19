@@ -63,6 +63,8 @@ def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, ob
         "alertIntervalSeconds": config.alert_interval_seconds,
         "miaoCodeConfigured": bool(config.miao_code),
         "barkPushUrlConfigured": bool(config.bark_push_url),
+        **({"miaoCode": config.miao_code} if config.miao_code else {}),
+        **({"barkPushUrl": config.bark_push_url} if config.bark_push_url else {}),
     }
 
 
@@ -592,3 +594,24 @@ async def send_test_liquidation_alert(session: Session, cipher: SecretCipher) ->
         "status": result.status,
         **({"error": result.error} if result.error else {}),
     }
+
+
+async def send_test_miaotixing_alert(session: Session, cipher: SecretCipher) -> dict[str, str]:
+    config = load_liquidation_monitor_config(session, cipher)
+    if not config.miao_code:
+        raise ValueError("Miaotixing code is not configured")
+    return await send_miaotixing_alert(
+        config.miao_code,
+        "Profits Check liquidation monitor test alert.",
+    )
+
+
+async def send_test_bark_alert(session: Session, cipher: SecretCipher) -> dict[str, str]:
+    config = load_liquidation_monitor_config(session, cipher)
+    if not config.bark_push_url:
+        raise ValueError("Bark push URL is not configured")
+    return await send_bark_alert(
+        config.bark_push_url,
+        "Profits Check test alert",
+        "Profits Check liquidation monitor test alert.",
+    )

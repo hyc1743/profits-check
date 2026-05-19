@@ -88,7 +88,7 @@ def test_liquidation_monitor_config_round_trips(client) -> None:
     assert payload["config"]["alertIntervalSeconds"] == 120
     assert payload["config"]["miaoCodeConfigured"] is True
     assert payload["config"]["barkPushUrlConfigured"] is False
-    assert "miaoCode" not in payload["config"]
+    assert payload["config"]["miaoCode"] == "miao-123"
     assert "barkPushUrl" not in payload["config"]
 
 
@@ -107,7 +107,7 @@ def test_liquidation_monitor_config_round_trips_bark_push_url(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["config"]["barkPushUrlConfigured"] is True
-    assert "barkPushUrl" not in payload["config"]
+    assert payload["config"]["barkPushUrl"] == "https://bark.example.com/device-key"
 
     keep_existing_response = client.put(
         "/api/liquidation-monitor",
@@ -621,6 +621,38 @@ def test_liquidation_monitor_test_alert_uses_configured_miao_code(client, httpx_
     assert response.json()["status"] == "sent"
 
 
+def test_liquidation_monitor_test_miaotixing_alert_only_uses_miao_code(
+    client, httpx_mock
+) -> None:
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": False,
+            "thresholdPercent": "5",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
+            "miaoCode": "miao-123",
+            "barkPushUrl": "https://bark.example.com/device-key",
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://miaotixing.com/trigger",
+        json={
+            "code": 0,
+            "msg": "完成",
+            "data": {"success_sent": {"mptext": 1, "sms": 0, "phonecall": 1}},
+        },
+    )
+
+    response = client.post("/api/liquidation-monitor/test-alert/miaotixing")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+    assert httpx_mock.get_request(url="https://miaotixing.com/trigger") is not None
+    assert httpx_mock.get_request(url="https://bark.example.com/device-key") is None
+
+
 def test_liquidation_monitor_test_alert_uses_configured_bark_url(client, httpx_mock) -> None:
     client.put(
         "/api/liquidation-monitor",
@@ -645,3 +677,29 @@ def test_liquidation_monitor_test_alert_uses_configured_bark_url(client, httpx_m
     request = httpx_mock.get_request(url="https://bark.example.com/device-key")
     assert request is not None
     assert "Profits Check liquidation monitor test alert." in request.read().decode()
+
+
+def test_liquidation_monitor_test_bark_alert_only_uses_bark_url(client, httpx_mock) -> None:
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": False,
+            "thresholdPercent": "5",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
+            "miaoCode": "miao-123",
+            "barkPushUrl": "https://bark.example.com/device-key",
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://bark.example.com/device-key",
+        json={"code": 200, "message": "success"},
+    )
+
+    response = client.post("/api/liquidation-monitor/test-alert/bark")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+    assert httpx_mock.get_request(url="https://bark.example.com/device-key") is not None
+    assert httpx_mock.get_request(url="https://miaotixing.com/trigger") is None

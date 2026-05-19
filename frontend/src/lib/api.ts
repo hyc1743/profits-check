@@ -90,6 +90,8 @@ export interface LiquidationMonitorConfig {
   alertIntervalSeconds: number
   miaoCodeConfigured: boolean
   barkPushUrlConfigured: boolean
+  miaoCode?: string
+  barkPushUrl?: string
 }
 
 export interface LiquidationPositionResponse {
@@ -258,6 +260,14 @@ export const api = {
     }),
   testLiquidationAlert: () =>
     requestJson<{ status: string; error?: string }>('/api/liquidation-monitor/test-alert', {
+      method: 'POST',
+    }),
+  testMiaotixingAlert: () =>
+    requestJson<{ status: string; error?: string }>('/api/liquidation-monitor/test-alert/miaotixing', {
+      method: 'POST',
+    }),
+  testBarkAlert: () =>
+    requestJson<{ status: string; error?: string }>('/api/liquidation-monitor/test-alert/bark', {
       method: 'POST',
     }),
   resetSystem: () =>

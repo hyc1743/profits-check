@@ -47,7 +47,9 @@ from profits_check_backend.services.liquidation_monitor import (
     load_liquidation_monitor_config,
     run_liquidation_monitor,
     save_liquidation_monitor_config,
+    send_test_bark_alert,
     send_test_liquidation_alert,
+    send_test_miaotixing_alert,
 )
 from profits_check_backend.services.snapshots import (
     _get_okx_dex_secrets,
@@ -628,6 +630,24 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     ):
         try:
             return asyncio.run(send_test_liquidation_alert(session, cipher))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/liquidation-monitor/test-alert/miaotixing")
+    def test_liquidation_monitor_miaotixing_alert(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        try:
+            return asyncio.run(send_test_miaotixing_alert(session, cipher))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/liquidation-monitor/test-alert/bark")
+    def test_liquidation_monitor_bark_alert(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        try:
+            return asyncio.run(send_test_bark_alert(session, cipher))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

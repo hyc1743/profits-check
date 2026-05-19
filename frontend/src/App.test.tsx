@@ -159,6 +159,8 @@ function installHandlers() {
     http.get('/api/liquidation-monitor', () => HttpResponse.json(liquidationMonitorPayload)),
     http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(liquidationMonitorPayload)),
     http.post('/api/liquidation-monitor/test-alert', () => HttpResponse.json({ status: 'sent' })),
+    http.post('/api/liquidation-monitor/test-alert/miaotixing', () => HttpResponse.json({ status: 'sent' })),
+    http.post('/api/liquidation-monitor/test-alert/bark', () => HttpResponse.json({ status: 'sent' })),
     http.post('/api/snapshots/run', () =>
       HttpResponse.json({
         id: 5,
@@ -422,10 +424,15 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
           ...liquidationMonitorPayload.config,
           ...body,
           miaoCodeConfigured: Boolean(body.miaoCode),
+          barkPushUrlConfigured: Boolean(body.barkPushUrl),
         },
       })
     }),
-    http.post('/api/liquidation-monitor/test-alert', () => {
+    http.post('/api/liquidation-monitor/test-alert/miaotixing', () => {
+      testAlertCalled = true
+      return HttpResponse.json({ status: 'sent' })
+    }),
+    http.post('/api/liquidation-monitor/test-alert/bark', () => {
       testAlertCalled = true
       return HttpResponse.json({ status: 'sent' })
     }),
@@ -467,16 +474,17 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
       },
     ]),
   )
-  expect(screen.getByLabelText('喵码')).toHaveValue('')
-  expect(screen.getByLabelText('Bark Push URL')).toHaveValue('')
-  expect(screen.getByLabelText('喵码')).toHaveAttribute('autocomplete', 'new-password')
-  expect(screen.getByLabelText('Bark Push URL')).toHaveAttribute('autocomplete', 'new-password')
+  expect(screen.getByLabelText('喵码')).toHaveValue('miao-123')
+  expect(screen.getByLabelText('Bark Push URL')).toHaveValue('https://bark.example.com/device-key')
 
-  await user.click(screen.getByRole('button', { name: 'Test Alert' }))
+  await user.click(screen.getByRole('button', { name: '测试喵提醒' }))
+  await waitFor(() => expect(testAlertCalled).toBe(true))
+  testAlertCalled = false
+  await user.click(screen.getByRole('button', { name: '测试 Bark' }))
   await waitFor(() => expect(testAlertCalled).toBe(true))
 })
 
-test('keeps configured bark push url when liquidation monitor form is saved blank', async () => {
+test('shows configured alert channel values and can clear them', async () => {
   installHandlers()
   const monitorUpdates: Array<Record<string, unknown>> = []
   server.use(
@@ -486,6 +494,9 @@ test('keeps configured bark push url when liquidation monitor form is saved blan
         config: {
           ...liquidationMonitorPayload.config,
           barkPushUrlConfigured: true,
+          barkPushUrl: 'https://bark.example.com/device-key',
+          miaoCodeConfigured: true,
+          miaoCode: 'miao-123',
         },
       }),
     ),
@@ -507,11 +518,14 @@ test('keeps configured bark push url when liquidation monitor form is saved blan
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '设置' }))
-  expect(screen.getByLabelText('Bark Push URL')).toHaveAttribute('placeholder', 'Configured')
+  expect(screen.getByLabelText('喵码')).toHaveValue('miao-123')
+  expect(screen.getByLabelText('Bark Push URL')).toHaveValue('https://bark.example.com/device-key')
+  await user.clear(screen.getByLabelText('喵码'))
+  await user.clear(screen.getByLabelText('Bark Push URL'))
   await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
 
   await waitFor(() => expect(monitorUpdates).toHaveLength(1))
-  expect(monitorUpdates[0]).not.toHaveProperty('barkPushUrl')
+  expect(monitorUpdates[0]).toMatchObject({ miaoCode: '', barkPushUrl: '' })
 })
 
 test('switches channel form fields for onchain and runs manual snapshot', async () => {

@@ -482,10 +482,17 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     onError: (error) => setNotice(error.message),
   })
 
-  const testLiquidationAlertMutation = useMutation({
-    mutationFn: api.testLiquidationAlert,
+  const testMiaotixingAlertMutation = useMutation({
+    mutationFn: api.testMiaotixingAlert,
     onSuccess: (result) => {
-      setNotice(result.status === 'sent' ? '测试电话提醒已发送。' : '测试提醒已提交。')
+      setNotice(result.status === 'sent' ? '测试喵提醒已发送。' : '测试喵提醒已提交。')
+    },
+    onError: (error) => setNotice(error.message),
+  })
+  const testBarkAlertMutation = useMutation({
+    mutationFn: api.testBarkAlert,
+    onSuccess: (result) => {
+      setNotice(result.status === 'sent' ? '测试 Bark 已发送。' : '测试 Bark 已提交。')
     },
     onError: (error) => setNotice(error.message),
   })
@@ -1119,12 +1126,14 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           onSaveSchedule={(payload) => scheduleMutation.mutate(payload)}
           liquidationMonitor={liquidationMonitorQuery.data}
           onSaveLiquidationMonitor={(payload) => liquidationMonitorMutation.mutate(payload)}
-          onTestLiquidationAlert={() => testLiquidationAlertMutation.mutate()}
+          onTestMiaotixingAlert={() => testMiaotixingAlertMutation.mutate()}
+          onTestBarkAlert={() => testBarkAlertMutation.mutate()}
           onResetSystem={() => resetSystemMutation.mutate()}
           isSavingChannel={createChannelMutation.isPending || updateChannelMutation.isPending}
           isSavingSchedule={scheduleMutation.isPending}
           isSavingLiquidationMonitor={liquidationMonitorMutation.isPending}
-          isTestingLiquidationAlert={testLiquidationAlertMutation.isPending}
+          isTestingMiaotixingAlert={testMiaotixingAlertMutation.isPending}
+          isTestingBarkAlert={testBarkAlertMutation.isPending}
           isResetting={resetSystemMutation.isPending}
           onClose={() => { setShowSettings(false); setEditingChannel(null) }}
         />
@@ -1146,12 +1155,14 @@ function SettingsDialog({
   onSaveSchedule,
   liquidationMonitor,
   onSaveLiquidationMonitor,
-  onTestLiquidationAlert,
+  onTestMiaotixingAlert,
+  onTestBarkAlert,
   onResetSystem,
   isSavingChannel,
   isSavingSchedule,
   isSavingLiquidationMonitor,
-  isTestingLiquidationAlert,
+  isTestingMiaotixingAlert,
+  isTestingBarkAlert,
   isResetting,
   onClose,
 }: {
@@ -1165,12 +1176,14 @@ function SettingsDialog({
   onSaveSchedule: (payload: ScheduleResponse) => void
   liquidationMonitor?: LiquidationMonitorResponse
   onSaveLiquidationMonitor: (payload: UpdateLiquidationMonitorPayload) => void
-  onTestLiquidationAlert: () => void
+  onTestMiaotixingAlert: () => void
+  onTestBarkAlert: () => void
   onResetSystem: () => void
   isSavingChannel: boolean
   isSavingSchedule: boolean
   isSavingLiquidationMonitor: boolean
-  isTestingLiquidationAlert: boolean
+  isTestingMiaotixingAlert: boolean
+  isTestingBarkAlert: boolean
   isResetting: boolean
   onClose: () => void
 }) {
@@ -1287,9 +1300,11 @@ function SettingsDialog({
             <LiquidationMonitorForm
               monitor={liquidationMonitor}
               onSubmit={onSaveLiquidationMonitor}
-              onTestAlert={onTestLiquidationAlert}
+              onTestMiaotixingAlert={onTestMiaotixingAlert}
+              onTestBarkAlert={onTestBarkAlert}
               isSaving={isSavingLiquidationMonitor}
-              isTestingAlert={isTestingLiquidationAlert}
+              isTestingMiaotixingAlert={isTestingMiaotixingAlert}
+              isTestingBarkAlert={isTestingBarkAlert}
             />
           </article>
 
@@ -1746,15 +1761,19 @@ function ChannelForm({
 function LiquidationMonitorForm({
   monitor,
   onSubmit,
-  onTestAlert,
+  onTestMiaotixingAlert,
+  onTestBarkAlert,
   isSaving,
-  isTestingAlert,
+  isTestingMiaotixingAlert,
+  isTestingBarkAlert,
 }: {
   monitor?: LiquidationMonitorResponse
   onSubmit: (payload: UpdateLiquidationMonitorPayload) => void
-  onTestAlert: () => void
+  onTestMiaotixingAlert: () => void
+  onTestBarkAlert: () => void
   isSaving: boolean
-  isTestingAlert: boolean
+  isTestingMiaotixingAlert: boolean
+  isTestingBarkAlert: boolean
 }) {
   const config = monitor?.config
   const form = useForm<LiquidationMonitorFormInput, undefined, LiquidationMonitorFormValues>({
@@ -1769,8 +1788,8 @@ function LiquidationMonitorForm({
       marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
-      miaoCode: '',
-      barkPushUrl: '',
+      miaoCode: config?.miaoCode ?? '',
+      barkPushUrl: config?.barkPushUrl ?? '',
     },
   })
   const { register, handleSubmit, reset, formState: { errors } } = form
@@ -1786,8 +1805,8 @@ function LiquidationMonitorForm({
       marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
-      miaoCode: '',
-      barkPushUrl: '',
+      miaoCode: config?.miaoCode ?? '',
+      barkPushUrl: config?.barkPushUrl ?? '',
     })
   }, [config, reset])
 
@@ -1797,7 +1816,7 @@ function LiquidationMonitorForm({
       onSubmit={handleSubmit((values) => {
         const miaoCode = values.miaoCode?.trim()
         const barkPushUrl = values.barkPushUrl?.trim()
-        const payload = {
+        onSubmit({
           monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled,
           positionMonitorEnabled: values.positionMonitorEnabled,
           positionThresholdPercent: values.positionThresholdPercent,
@@ -1805,11 +1824,9 @@ function LiquidationMonitorForm({
           marginBalanceThresholdPercent: values.marginBalanceThresholdPercent,
           checkIntervalSeconds: values.checkIntervalSeconds,
           alertIntervalSeconds: values.alertIntervalSeconds,
-          ...(miaoCode ? { miaoCode } : {}),
-          ...(barkPushUrl ? { barkPushUrl } : {}),
-        }
-        onSubmit(payload)
-        reset({ ...values, miaoCode: '', barkPushUrl: '' })
+          miaoCode,
+          barkPushUrl,
+        })
       })}
     >
       <div className="toggle-row">
@@ -1836,20 +1853,18 @@ function LiquidationMonitorForm({
       </Field>
       <Field label="喵码" error={errors.miaoCode?.message}>
         <input
-          type="password"
-          autoComplete="new-password"
+          autoComplete="off"
           spellCheck={false}
           {...register('miaoCode')}
-          placeholder={config?.miaoCodeConfigured ? '已配置' : '输入喵码'}
+          placeholder="输入喵码"
         />
       </Field>
       <Field label="Bark Push URL" error={errors.barkPushUrl?.message}>
         <input
-          type="password"
-          autoComplete="new-password"
+          autoComplete="off"
           spellCheck={false}
           {...register('barkPushUrl')}
-          placeholder={config?.barkPushUrlConfigured ? 'Configured' : 'https://bark.example.com/device-key'}
+          placeholder="https://bark.example.com/device-key"
         />
       </Field>
       <div className="form-actions">
@@ -1859,10 +1874,18 @@ function LiquidationMonitorForm({
         <button
           type="button"
           className="button button-secondary"
-          onClick={onTestAlert}
-          disabled={isTestingAlert}
+          onClick={onTestMiaotixingAlert}
+          disabled={isTestingMiaotixingAlert}
         >
-          {isTestingAlert ? 'Testing...' : 'Test Alert'}
+          {isTestingMiaotixingAlert ? '测试中...' : '测试喵提醒'}
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={onTestBarkAlert}
+          disabled={isTestingBarkAlert}
+        >
+          {isTestingBarkAlert ? '测试中...' : '测试 Bark'}
         </button>
       </div>
     </form>
