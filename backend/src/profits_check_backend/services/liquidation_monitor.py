@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -440,8 +440,9 @@ def position_alert_title(position: LiquidationPosition) -> str:
 
 def position_alert_text(position: LiquidationPosition) -> str:
     return (
-        f"{position.channel_name} {position.symbol} {position.side} "
-        f"current price {position.mark_price}, liquidation price {position.liquidation_price}."
+        f"{position.channel_name} {position.symbol} {position.side}\n"
+        f"Current price: {position.mark_price}\n"
+        f"Liquidation price: {position.liquidation_price}"
     )
 
 
@@ -450,7 +451,13 @@ def margin_balance_alert_title(channel: Channel) -> str:
 
 
 def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk) -> str:
-    return f"{channel.name} risk ratio {quantize_decimal(risk.risk_percent)}%."
+    risk_percent = risk.risk_percent
+    rendered_percent = (
+        str(risk_percent.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        if risk_percent is not None
+        else "N/A"
+    )
+    return f"{channel.name}\nRisk ratio: {rendered_percent}%"
 
 
 async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:

@@ -430,7 +430,9 @@ def test_manual_refresh_sends_bark_message_for_position_risk(client, httpx_mock)
     bark_payload = json.loads(request.read().decode())
     assert bark_payload["title"] == "OKX BTC-USDT-SWAP LONG"
     assert bark_payload["body"] == (
-        "OKX BTC-USDT-SWAP LONG current price 58100, liquidation price 58000."
+        "OKX BTC-USDT-SWAP LONG\n"
+        "Current price: 58100\n"
+        "Liquidation price: 58000"
     )
 
 
@@ -479,7 +481,7 @@ def test_manual_refresh_sends_bark_message_for_margin_balance_risk(client, httpx
     assert request is not None
     bark_payload = json.loads(request.read().decode())
     assert bark_payload["title"] == "Bybit risk ratio"
-    assert bark_payload["body"] == "Bybit risk ratio 65.00000000%."
+    assert bark_payload["body"] == "Bybit\nRisk ratio: 65%"
 
 
 def test_bark_failure_does_not_block_miaotixing_success(client, httpx_mock) -> None:
