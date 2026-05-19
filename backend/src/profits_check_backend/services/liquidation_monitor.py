@@ -244,7 +244,7 @@ async def run_liquidation_monitor(
                 alert_result = await send_liquidation_alert(
                     miao_code=config.miao_code,
                     bark_push_url=config.bark_push_url,
-                    title="Profits Check liquidation risk",
+                    title=position_alert_title(model),
                     text=position_alert_text(model),
                 )
                 model.last_alert_status = alert_result.status
@@ -279,11 +279,10 @@ async def run_liquidation_monitor(
                 alert_result = await send_liquidation_alert(
                     miao_code=config.miao_code,
                     bark_push_url=config.bark_push_url,
-                    title="Profits Check margin balance risk",
+                    title=margin_balance_alert_title(channel),
                     text=margin_balance_alert_text(
                         channel,
                         provider_margin_balance,
-                        config.margin_balance_threshold_percent,
                     ),
                 )
                 margin_model.last_alert_status = alert_result.status
@@ -435,25 +434,23 @@ def should_send_alert(
     return now - last_alert_at >= timedelta(seconds=alert_interval_seconds)
 
 
+def position_alert_title(position: LiquidationPosition) -> str:
+    return f"{position.channel_name} {position.symbol} {position.side}"
+
+
 def position_alert_text(position: LiquidationPosition) -> str:
     return (
-        f"{position.channel_name} {position.symbol} {position.side} liquidation risk. "
-        f"Quantity {position.quantity}, "
-        f"Mark {position.mark_price}, liquidation {position.liquidation_price}, "
-        f"distance {quantize_decimal(position.distance_percent)}% <= "
-        f"threshold {quantize_decimal(position.threshold_percent)}%."
+        f"{position.channel_name} {position.symbol} {position.side} "
+        f"current price {position.mark_price}, liquidation price {position.liquidation_price}."
     )
 
 
-def margin_balance_alert_text(
-    channel: Channel, risk: ContractMarginBalanceRisk, threshold_percent: Decimal
-) -> str:
-    return (
-        f"{channel.name} margin balance risk. Wallet {risk.wallet_balance}, "
-        f"margin balance {risk.margin_balance}, unrealized PnL {risk.unrealized_pnl}, "
-        f"risk ratio {quantize_decimal(risk.risk_percent)}% < "
-        f"threshold {quantize_decimal(threshold_percent)}%."
-    )
+def margin_balance_alert_title(channel: Channel) -> str:
+    return f"{channel.name} risk ratio"
+
+
+def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk) -> str:
+    return f"{channel.name} risk ratio {quantize_decimal(risk.risk_percent)}%."
 
 
 async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -426,10 +427,11 @@ def test_manual_refresh_sends_bark_message_for_position_risk(client, httpx_mock)
     assert payload["alertCount"] == 1
     request = httpx_mock.get_request(url="https://bark.example.com/device-key")
     assert request is not None
-    body = request.read().decode()
-    assert "OKX" in body
-    assert "BTC-USDT-SWAP" in body
-    assert "distance 0.17211704% <= threshold 1.00000000%" in body
+    bark_payload = json.loads(request.read().decode())
+    assert bark_payload["title"] == "OKX BTC-USDT-SWAP LONG"
+    assert bark_payload["body"] == (
+        "OKX BTC-USDT-SWAP LONG current price 58100, liquidation price 58000."
+    )
 
 
 def test_manual_refresh_sends_bark_message_for_margin_balance_risk(client, httpx_mock) -> None:
@@ -475,10 +477,9 @@ def test_manual_refresh_sends_bark_message_for_margin_balance_risk(client, httpx
     assert refresh_response.status_code == 200
     request = httpx_mock.get_request(url="https://bark.example.com/device-key")
     assert request is not None
-    body = request.read().decode()
-    assert "Bybit" in body
-    assert "margin balance risk" in body
-    assert "risk ratio 65.00000000% < threshold 70.00000000%" in body
+    bark_payload = json.loads(request.read().decode())
+    assert bark_payload["title"] == "Bybit risk ratio"
+    assert bark_payload["body"] == "Bybit risk ratio 65.00000000%."
 
 
 def test_bark_failure_does_not_block_miaotixing_success(client, httpx_mock) -> None:
