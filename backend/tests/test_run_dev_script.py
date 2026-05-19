@@ -124,10 +124,29 @@ def test_sync_dependencies_installs_when_lock_changes(tmp_path, monkeypatch) -> 
     assert stamp_path.read_text() == run_dev.dependency_signature([lock_file])
 
 
+def test_clean_frontend_dist_preserves_server_hidden_files(tmp_path) -> None:
+    run_dev = load_run_dev()
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / ".user.ini").write_text("open_basedir=/www/wwwroot/profits-check")
+    (dist / "index.html").write_text("<html></html>")
+    (dist / "vite.svg").write_text("<svg></svg>")
+    (assets / "app.js").write_text("console.log('old')")
+
+    run_dev.clean_frontend_dist(dist)
+
+    assert (dist / ".user.ini").read_text() == "open_basedir=/www/wwwroot/profits-check"
+    assert not (dist / "index.html").exists()
+    assert not (dist / "vite.svg").exists()
+    assert not assets.exists()
+
+
 def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
     run_dev = load_run_dev()
     commands: list[tuple[list[str], Path]] = []
     started: list[tuple[str, list[str], Path]] = []
+    cleaned: list[Path] = []
 
     class FinishedProcess:
         def poll(self) -> int:
@@ -146,6 +165,7 @@ def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
         "run_command",
         lambda command, cwd, _env=None: commands.append((command, cwd)),
     )
+    monkeypatch.setattr(run_dev, "clean_frontend_dist", lambda path: cleaned.append(path))
     monkeypatch.setattr(run_dev.signal, "signal", lambda *_args, **_kwargs: None)
 
     def fake_start_process(name, command, cwd, _env=None):
@@ -156,6 +176,7 @@ def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
 
     assert run_dev.main() == 0
 
+    assert cleaned == [run_dev.FRONTEND_DIR / "dist"]
     assert (["bun", "run", "build"], run_dev.FRONTEND_DIR) in commands
     assert started == [
         (

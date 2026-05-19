@@ -8,6 +8,9 @@ const allowedHosts = (process.env.PROFITS_CHECK_ALLOWED_HOSTS ?? '')
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    emptyOutDir: false,
+  },
   server: {
     host: '127.0.0.1',
     port: 8300,

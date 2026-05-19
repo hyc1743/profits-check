@@ -11,8 +11,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from shutil import which
-
+from shutil import rmtree, which
 
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
@@ -170,7 +169,25 @@ def run_command(command: list[str], cwd: Path, env: dict[str, str] | None = None
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
-def start_process(name: str, command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.Popen[str]:
+def clean_frontend_dist(dist_dir: Path) -> None:
+    if not dist_dir.exists():
+        return
+
+    generated_paths = [
+        dist_dir / "assets",
+        dist_dir / "index.html",
+        dist_dir / "vite.svg",
+    ]
+    for path in generated_paths:
+        if path.is_dir():
+            rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+
+def start_process(
+    name: str, command: list[str], cwd: Path, env: dict[str, str] | None = None
+) -> subprocess.Popen[str]:
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -216,6 +233,7 @@ def main() -> int:
     )
 
     print("Building frontend static files...")
+    clean_frontend_dist(FRONTEND_DIR / "dist")
     run_command(["bun", "run", "build"], FRONTEND_DIR, env)
 
     print(f"Starting backend on {backend_url}")
