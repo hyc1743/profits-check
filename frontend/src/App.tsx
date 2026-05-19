@@ -1797,7 +1797,7 @@ function LiquidationMonitorForm({
       onSubmit={handleSubmit((values) => {
         const miaoCode = values.miaoCode?.trim()
         const barkPushUrl = values.barkPushUrl?.trim()
-        onSubmit({
+        const payload = {
           monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled,
           positionMonitorEnabled: values.positionMonitorEnabled,
           positionThresholdPercent: values.positionThresholdPercent,
@@ -1807,7 +1807,9 @@ function LiquidationMonitorForm({
           alertIntervalSeconds: values.alertIntervalSeconds,
           ...(miaoCode ? { miaoCode } : {}),
           ...(barkPushUrl ? { barkPushUrl } : {}),
-        })
+        }
+        onSubmit(payload)
+        reset({ ...values, miaoCode: '', barkPushUrl: '' })
       })}
     >
       <div className="toggle-row">
@@ -1835,6 +1837,8 @@ function LiquidationMonitorForm({
       <Field label="喵码" error={errors.miaoCode?.message}>
         <input
           type="password"
+          autoComplete="new-password"
+          spellCheck={false}
           {...register('miaoCode')}
           placeholder={config?.miaoCodeConfigured ? '已配置' : '输入喵码'}
         />
@@ -1842,6 +1846,8 @@ function LiquidationMonitorForm({
       <Field label="Bark Push URL" error={errors.barkPushUrl?.message}>
         <input
           type="password"
+          autoComplete="new-password"
+          spellCheck={false}
           {...register('barkPushUrl')}
           placeholder={config?.barkPushUrlConfigured ? 'Configured' : 'https://bark.example.com/device-key'}
         />

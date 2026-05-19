@@ -467,6 +467,10 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
       },
     ]),
   )
+  expect(screen.getByLabelText('喵码')).toHaveValue('')
+  expect(screen.getByLabelText('Bark Push URL')).toHaveValue('')
+  expect(screen.getByLabelText('喵码')).toHaveAttribute('autocomplete', 'new-password')
+  expect(screen.getByLabelText('Bark Push URL')).toHaveAttribute('autocomplete', 'new-password')
 
   await user.click(screen.getByRole('button', { name: 'Test Alert' }))
   await waitFor(() => expect(testAlertCalled).toBe(true))
