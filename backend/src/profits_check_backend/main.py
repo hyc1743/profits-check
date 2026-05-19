@@ -197,6 +197,7 @@ class LiquidationMonitorPayload(BaseModel):
     check_interval_seconds: int = Field(alias="checkIntervalSeconds", gt=0)
     alert_interval_seconds: int = Field(alias="alertIntervalSeconds", gt=0)
     miao_code: str | None = Field(default=None, alias="miaoCode", max_length=256)
+    bark_push_url: str | None = Field(default=None, alias="barkPushUrl", max_length=2048)
 
     @property
     def resolved_position_monitor_enabled(self) -> bool:
@@ -212,7 +213,9 @@ class LiquidationMonitorPayload(BaseModel):
     def resolved_monitor_enabled(self) -> bool:
         if self.monitor_enabled is not None and self.position_monitor_enabled is None:
             return self.monitor_enabled
-        return self.resolved_position_monitor_enabled or self.resolved_margin_balance_monitor_enabled
+        return (
+            self.resolved_position_monitor_enabled or self.resolved_margin_balance_monitor_enabled
+        )
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -589,6 +592,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 check_interval_seconds=payload.check_interval_seconds,
                 alert_interval_seconds=payload.alert_interval_seconds,
                 miao_code=payload.miao_code,
+                bark_push_url=payload.bark_push_url,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

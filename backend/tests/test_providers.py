@@ -869,6 +869,7 @@ async def test_binance_provider_collects_contract_margin_balance_risk(httpx_mock
 
     risk = await provider.collect_contract_margin_balance()
 
+    assert risk is not None
     assert risk.wallet_balance == Decimal("1000")
     assert risk.margin_balance == Decimal("650")
     assert risk.unrealized_pnl == Decimal("-350")

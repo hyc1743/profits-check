@@ -99,6 +99,7 @@ const liquidationMonitorPayload = {
     checkIntervalSeconds: 60,
     alertIntervalSeconds: 900,
     miaoCodeConfigured: false,
+    barkPushUrlConfigured: false,
   },
   positions: [
     {
@@ -181,6 +182,7 @@ function installHandlers() {
           ...liquidationMonitorPayload.config,
           ...body,
           miaoCodeConfigured: Boolean(body.miaoCode),
+          barkPushUrlConfigured: Boolean(body.barkPushUrl),
         },
       })
     }),
@@ -447,6 +449,7 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
   await user.clear(screen.getByLabelText('提醒频率'))
   await user.type(screen.getByLabelText('提醒频率'), '120')
   await user.type(screen.getByLabelText('喵码'), 'miao-123')
+  await user.type(screen.getByLabelText('Bark Push URL'), 'https://bark.example.com/device-key')
   await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
 
   await waitFor(() =>
@@ -460,12 +463,51 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
         checkIntervalSeconds: 45,
         alertIntervalSeconds: 120,
         miaoCode: 'miao-123',
+        barkPushUrl: 'https://bark.example.com/device-key',
       },
     ]),
   )
 
-  await user.click(screen.getByRole('button', { name: '测试电话提醒' }))
+  await user.click(screen.getByRole('button', { name: 'Test Alert' }))
   await waitFor(() => expect(testAlertCalled).toBe(true))
+})
+
+test('keeps configured bark push url when liquidation monitor form is saved blank', async () => {
+  installHandlers()
+  const monitorUpdates: Array<Record<string, unknown>> = []
+  server.use(
+    http.get('/api/liquidation-monitor', () =>
+      HttpResponse.json({
+        ...liquidationMonitorPayload,
+        config: {
+          ...liquidationMonitorPayload.config,
+          barkPushUrlConfigured: true,
+        },
+      }),
+    ),
+    http.put('/api/liquidation-monitor', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      monitorUpdates.push(body)
+      return HttpResponse.json({
+        ...liquidationMonitorPayload,
+        config: {
+          ...liquidationMonitorPayload.config,
+          ...body,
+          barkPushUrlConfigured: true,
+        },
+      })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  expect(screen.getByLabelText('Bark Push URL')).toHaveAttribute('placeholder', 'Configured')
+  await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
+
+  await waitFor(() => expect(monitorUpdates).toHaveLength(1))
+  expect(monitorUpdates[0]).not.toHaveProperty('barkPushUrl')
 })
 
 test('switches channel form fields for onchain and runs manual snapshot', async () => {

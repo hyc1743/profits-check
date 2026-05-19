@@ -64,6 +64,7 @@ const liquidationMonitorSchema = z.object({
   checkIntervalSeconds: z.coerce.number().int().positive('监控频率必须是正整数秒。'),
   alertIntervalSeconds: z.coerce.number().int().positive('提醒频率必须是正整数秒。'),
   miaoCode: z.string().optional(),
+  barkPushUrl: z.string().optional(),
 })
 
 type LiquidationMonitorFormInput = z.input<typeof liquidationMonitorSchema>
@@ -1769,6 +1770,7 @@ function LiquidationMonitorForm({
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
+      barkPushUrl: '',
     },
   })
   const { register, handleSubmit, reset, formState: { errors } } = form
@@ -1785,6 +1787,7 @@ function LiquidationMonitorForm({
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: '',
+      barkPushUrl: '',
     })
   }, [config, reset])
 
@@ -1793,6 +1796,7 @@ function LiquidationMonitorForm({
       className="liquidation-form"
       onSubmit={handleSubmit((values) => {
         const miaoCode = values.miaoCode?.trim()
+        const barkPushUrl = values.barkPushUrl?.trim()
         onSubmit({
           monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled,
           positionMonitorEnabled: values.positionMonitorEnabled,
@@ -1802,6 +1806,7 @@ function LiquidationMonitorForm({
           checkIntervalSeconds: values.checkIntervalSeconds,
           alertIntervalSeconds: values.alertIntervalSeconds,
           ...(miaoCode ? { miaoCode } : {}),
+          ...(barkPushUrl ? { barkPushUrl } : {}),
         })
       })}
     >
@@ -1834,6 +1839,13 @@ function LiquidationMonitorForm({
           placeholder={config?.miaoCodeConfigured ? '已配置' : '输入喵码'}
         />
       </Field>
+      <Field label="Bark Push URL" error={errors.barkPushUrl?.message}>
+        <input
+          type="password"
+          {...register('barkPushUrl')}
+          placeholder={config?.barkPushUrlConfigured ? 'Configured' : 'https://bark.example.com/device-key'}
+        />
+      </Field>
       <div className="form-actions">
         <button type="submit" className="button button-primary" disabled={isSaving}>
           {isSaving ? '保存中...' : '保存爆仓监控'}
@@ -1844,7 +1856,7 @@ function LiquidationMonitorForm({
           onClick={onTestAlert}
           disabled={isTestingAlert}
         >
-          {isTestingAlert ? '测试中...' : '测试电话提醒'}
+          {isTestingAlert ? 'Testing...' : 'Test Alert'}
         </button>
       </div>
     </form>

@@ -89,6 +89,7 @@ export interface LiquidationMonitorConfig {
   checkIntervalSeconds: number
   alertIntervalSeconds: number
   miaoCodeConfigured: boolean
+  barkPushUrlConfigured: boolean
 }
 
 export interface LiquidationPositionResponse {
@@ -148,6 +149,7 @@ export interface UpdateLiquidationMonitorPayload {
   checkIntervalSeconds: number
   alertIntervalSeconds: number
   miaoCode?: string
+  barkPushUrl?: string
 }
 
 export interface ResetSystemResponse {

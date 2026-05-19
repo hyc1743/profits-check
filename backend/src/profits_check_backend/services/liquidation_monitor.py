@@ -36,10 +36,18 @@ class LiquidationMonitorConfig:
     check_interval_seconds: int = 60
     alert_interval_seconds: int = 900
     miao_code: str = ""
+    bark_push_url: str = ""
 
     @property
     def threshold_percent(self) -> Decimal:
         return self.position_threshold_percent
+
+
+@dataclass(slots=True)
+class AlertSendResult:
+    status: str
+    sent: bool = False
+    error: str | None = None
 
 
 def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, object]:
@@ -50,12 +58,11 @@ def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, ob
         "positionMonitorEnabled": config.position_monitor_enabled,
         "positionThresholdPercent": quantize_decimal(config.position_threshold_percent),
         "marginBalanceMonitorEnabled": config.margin_balance_monitor_enabled,
-        "marginBalanceThresholdPercent": quantize_decimal(
-            config.margin_balance_threshold_percent
-        ),
+        "marginBalanceThresholdPercent": quantize_decimal(config.margin_balance_threshold_percent),
         "checkIntervalSeconds": config.check_interval_seconds,
         "alertIntervalSeconds": config.alert_interval_seconds,
         "miaoCodeConfigured": bool(config.miao_code),
+        "barkPushUrlConfigured": bool(config.bark_push_url),
     }
 
 
@@ -67,10 +74,11 @@ def load_liquidation_monitor_config(
     miao_code = ""
     if payload.get("miaoCodeEncrypted"):
         miao_code = cipher.decrypt(str(payload["miaoCodeEncrypted"]))
+    bark_push_url = ""
+    if payload.get("barkPushUrlEncrypted"):
+        bark_push_url = cipher.decrypt(str(payload["barkPushUrlEncrypted"]))
     legacy_monitor_enabled = bool(payload.get("monitorEnabled", False))
-    position_monitor_enabled = bool(
-        payload.get("positionMonitorEnabled", legacy_monitor_enabled)
-    )
+    position_monitor_enabled = bool(payload.get("positionMonitorEnabled", legacy_monitor_enabled))
     margin_balance_monitor_enabled = bool(payload.get("marginBalanceMonitorEnabled", False))
     return LiquidationMonitorConfig(
         monitor_enabled=bool(
@@ -91,6 +99,7 @@ def load_liquidation_monitor_config(
         check_interval_seconds=int(payload.get("checkIntervalSeconds", 60)),
         alert_interval_seconds=int(payload.get("alertIntervalSeconds", 900)),
         miao_code=miao_code,
+        bark_push_url=bark_push_url,
     )
 
 
@@ -107,6 +116,7 @@ def save_liquidation_monitor_config(
     check_interval_seconds: int,
     alert_interval_seconds: int,
     miao_code: str | None,
+    bark_push_url: str | None = None,
 ) -> LiquidationMonitorConfig:
     if position_monitor_enabled is None:
         position_monitor_enabled = monitor_enabled
@@ -124,10 +134,13 @@ def save_liquidation_monitor_config(
         raise ValueError("Liquidation threshold must be greater than 0")
     if (
         position_threshold_percent != position_threshold_percent.to_integral_value()
-        or margin_balance_threshold_percent
-        != margin_balance_threshold_percent.to_integral_value()
+        or margin_balance_threshold_percent != margin_balance_threshold_percent.to_integral_value()
     ):
         raise ValueError("Liquidation threshold must be an integer")
+    if bark_push_url is not None:
+        bark_push_url = bark_push_url.strip()
+        if bark_push_url and not bark_push_url.startswith(("http://", "https://")):
+            raise ValueError("Bark push URL must start with http:// or https://")
 
     setting = get_or_create_setting(session, LIQUIDATION_MONITOR_SETTING_KEY, "{}")
     existing = json.loads(setting.value_json or "{}")
@@ -149,6 +162,11 @@ def save_liquidation_monitor_config(
             existing["miaoCodeEncrypted"] = cipher.encrypt(miao_code)
         else:
             existing.pop("miaoCodeEncrypted", None)
+    if bark_push_url is not None:
+        if bark_push_url:
+            existing["barkPushUrlEncrypted"] = cipher.encrypt(bark_push_url)
+        else:
+            existing.pop("barkPushUrlEncrypted", None)
     setting.value_json = json.dumps(existing)
     session.commit()
     return load_liquidation_monitor_config(session, cipher)
@@ -218,16 +236,19 @@ async def run_liquidation_monitor(
             seen_keys.add((model.channel_id, model.symbol, model.side))
             if (
                 config.alert_enabled
-                and config.miao_code
+                and (config.miao_code or config.bark_push_url)
                 and should_send_alert(model, now, config.alert_interval_seconds)
             ):
-                alert_result = await send_miaotixing_alert(config.miao_code, alert_text(model))
-                model.last_alert_status = alert_result["status"]
-                model.last_alert_error = alert_result.get("error")
-                model.last_alert_at = (
-                    now if alert_result["status"] == "sent" else model.last_alert_at
+                alert_result = await send_liquidation_alert(
+                    miao_code=config.miao_code,
+                    bark_push_url=config.bark_push_url,
+                    title="Profits Check liquidation risk",
+                    text=position_alert_text(model),
                 )
-                if alert_result["status"] == "sent":
+                model.last_alert_status = alert_result.status
+                model.last_alert_error = alert_result.error
+                model.last_alert_at = now if alert_result.sent else model.last_alert_at
+                if alert_result.sent:
                     alert_count += 1
             elif model.status != "warning" and model.distance_percent is not None:
                 recovery_line = config.threshold_percent + RECOVERY_BUFFER_PERCENT
@@ -250,30 +271,36 @@ async def run_liquidation_monitor(
             if (
                 config.margin_balance_monitor_enabled
                 and config.alert_enabled
-                and config.miao_code
+                and (config.miao_code or config.bark_push_url)
                 and margin_model.status == "warning"
             ):
-                alert_result = await send_miaotixing_alert(
-                    config.miao_code,
-                    margin_balance_alert_text(channel, provider_margin_balance),
+                alert_result = await send_liquidation_alert(
+                    miao_code=config.miao_code,
+                    bark_push_url=config.bark_push_url,
+                    title="Profits Check margin balance risk",
+                    text=margin_balance_alert_text(
+                        channel,
+                        provider_margin_balance,
+                        config.margin_balance_threshold_percent,
+                    ),
                 )
-                margin_model.last_alert_status = alert_result["status"]
-                margin_model.last_alert_error = alert_result.get("error")
-                margin_model.last_alert_at = now if alert_result["status"] == "sent" else None
-                if alert_result["status"] == "sent":
+                margin_model.last_alert_status = alert_result.status
+                margin_model.last_alert_error = alert_result.error
+                margin_model.last_alert_at = now if alert_result.sent else None
+                if alert_result.sent:
                     alert_count += 1
             margin_balances.append(margin_model)
 
-    for key, item in existing.items():
+    for key, position_item in existing.items():
         if key not in seen_keys:
-            session.delete(item)
-    for channel_id, item in existing_margin_balances.items():
+            session.delete(position_item)
+    for channel_id, margin_balance_item in existing_margin_balances.items():
         if (
             channel_id not in active_channel_ids
             or channel_id in checked_margin_balance_channel_ids
             and channel_id not in seen_margin_balance_channel_ids
         ):
-            session.delete(item)
+            session.delete(margin_balance_item)
 
     session.commit()
     positions.sort(
@@ -380,7 +407,7 @@ def upsert_liquidation_margin_balance(
     model.channel_name = channel.name
     model.wallet_balance = risk.wallet_balance
     model.margin_balance = risk.margin_balance
-    model.unrealized_pnl = risk.unrealized_pnl
+    model.unrealized_pnl = risk.unrealized_pnl or Decimal("0")
     model.risk_percent = risk_percent
     model.threshold_percent = threshold_percent
     model.status = status
@@ -406,18 +433,24 @@ def should_send_alert(
     return now - last_alert_at >= timedelta(seconds=alert_interval_seconds)
 
 
-def alert_text(position: LiquidationPosition) -> str:
+def position_alert_text(position: LiquidationPosition) -> str:
     return (
         f"{position.channel_name} {position.symbol} {position.side} liquidation risk. "
+        f"Quantity {position.quantity}, "
         f"Mark {position.mark_price}, liquidation {position.liquidation_price}, "
-        f"distance {quantize_decimal(position.distance_percent)}%."
+        f"distance {quantize_decimal(position.distance_percent)}% <= "
+        f"threshold {quantize_decimal(position.threshold_percent)}%."
     )
 
 
-def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk) -> str:
+def margin_balance_alert_text(
+    channel: Channel, risk: ContractMarginBalanceRisk, threshold_percent: Decimal
+) -> str:
     return (
         f"{channel.name} margin balance risk. Wallet {risk.wallet_balance}, "
-        f"margin balance {risk.margin_balance}, ratio {quantize_decimal(risk.risk_percent)}%."
+        f"margin balance {risk.margin_balance}, unrealized PnL {risk.unrealized_pnl}, "
+        f"risk ratio {quantize_decimal(risk.risk_percent)}% < "
+        f"threshold {quantize_decimal(threshold_percent)}%."
     )
 
 
@@ -435,6 +468,50 @@ async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:
     if phonecall_count <= 0:
         return {"status": "warning", "error": "Miaotixing did not report a phone call"}
     return {"status": "sent"}
+
+
+async def send_bark_alert(bark_push_url: str, title: str, body: str) -> dict[str, str]:
+    try:
+        async with provider_http_client() as client:
+            response = await client.post(
+                bark_push_url,
+                json={"title": title, "body": body, "group": "profits-check"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        return {"status": "failed", "error": f"Bark alert failed: {exc}"}
+    if payload.get("code") not in {0, "0", 200, "200", None}:
+        return {"status": "failed", "error": str(payload.get("message", "Bark alert failed"))}
+    return {"status": "sent"}
+
+
+async def send_liquidation_alert(
+    *, miao_code: str, bark_push_url: str, title: str, text: str
+) -> AlertSendResult:
+    miao_result: dict[str, str] | None = None
+    bark_result: dict[str, str] | None = None
+    errors: list[str] = []
+
+    if miao_code:
+        miao_result = await send_miaotixing_alert(miao_code, text)
+        if miao_result.get("status") != "sent" and miao_result.get("error"):
+            errors.append(str(miao_result["error"]))
+    if bark_push_url:
+        bark_result = await send_bark_alert(bark_push_url, title, text)
+        if bark_result.get("status") != "sent" and bark_result.get("error"):
+            errors.append(str(bark_result["error"]))
+
+    status_source = miao_result or bark_result or {"status": "failed"}
+    sent = any(
+        result is not None and result.get("status") == "sent"
+        for result in (miao_result, bark_result)
+    )
+    return AlertSendResult(
+        status=status_source["status"],
+        sent=sent,
+        error="; ".join(errors) if errors else None,
+    )
 
 
 def liquidation_position_payload(position: LiquidationPosition) -> dict[str, object]:
@@ -496,17 +573,22 @@ def get_liquidation_monitor_payload(session: Session, cipher: SecretCipher) -> d
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
         "marginBalances": [
-            liquidation_margin_balance_payload(margin_balance)
-            for margin_balance in margin_balances
+            liquidation_margin_balance_payload(margin_balance) for margin_balance in margin_balances
         ],
     }
 
 
 async def send_test_liquidation_alert(session: Session, cipher: SecretCipher) -> dict[str, str]:
     config = load_liquidation_monitor_config(session, cipher)
-    if not config.miao_code:
-        raise ValueError("Miaotixing code is not configured")
-    return await send_miaotixing_alert(
-        config.miao_code,
-        "Profits Check liquidation monitor test alert.",
+    if not config.miao_code and not config.bark_push_url:
+        raise ValueError("No alert channel is configured")
+    result = await send_liquidation_alert(
+        miao_code=config.miao_code,
+        bark_push_url=config.bark_push_url,
+        title="Profits Check test alert",
+        text="Profits Check liquidation monitor test alert.",
     )
+    return {
+        "status": result.status,
+        **({"error": result.error} if result.error else {}),
+    }
