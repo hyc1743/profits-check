@@ -243,6 +243,37 @@ async def test_onchain_provider_collects_token_total_value_for_multiple_wallets(
 
 
 @pytest.mark.asyncio
+async def test_onchain_provider_defaults_to_eth_and_bsc_when_chain_indexes_are_missing(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.onchain import OnChainProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://web3.okx.com/api/v6/dex/balance/total-value-by-address?address=0x367c518a67289e9bf6a18e0016aaea526d769459&chains=1,56&assetType=1&excludeRiskToken=true",
+        json={"code": "0", "msg": "success", "data": [{"totalValue": "14061.66"}]},
+    )
+
+    import os
+
+    os.environ["OKX_DEX_API_KEY"] = "key"
+    os.environ["OKX_DEX_API_SECRET"] = "secret"
+    os.environ["OKX_DEX_API_PASSPHRASE"] = "pass"
+
+    provider = OnChainProvider(
+        channel_name="Wallet",
+        config={"walletAddresses": ["0x367c518a67289e9bf6a18e0016aaea526d769459"]},
+        secrets={},
+        now_factory=lambda: "2026-05-09T00:00:00.000Z",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.total_value_usd == Decimal("14061.66")
+    assert snapshot.assets[0].metadata["chainIndexes"] == ["1", "56"]
+
+
+@pytest.mark.asyncio
 async def test_gate_provider_collects_spot_balances(httpx_mock) -> None:
     from profits_check_backend.providers.gate import GateProvider
 

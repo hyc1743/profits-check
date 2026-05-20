@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import httpx
+
 
 def test_rejects_legacy_bsc_provider(client) -> None:
     response = client.post(
@@ -17,18 +19,38 @@ def test_rejects_legacy_bsc_provider(client) -> None:
 
 
 def test_get_onchain_chains_returns_only_evm_supported_chains(client, httpx_mock) -> None:
-    httpx_mock.add_response(
+    client.put(
+        "/api/schedule",
+        json={
+            "snapshotScheduleTimes": "08:00",
+            "okxDexApiKey": "key",
+            "okxDexApiSecret": "secret",
+            "okxDexPassphrase": "pass",
+        },
+    )
+
+    def supported_chains_response(request):
+        assert request.headers["OK-ACCESS-KEY"] == "key"
+        assert request.headers["OK-ACCESS-SIGN"]
+        assert request.headers["OK-ACCESS-TIMESTAMP"]
+        assert request.headers["OK-ACCESS-PASSPHRASE"] == "pass"
+        return httpx.Response(
+            200,
+            json={
+                "code": "0",
+                "msg": "success",
+                "data": [
+                    {"chainIndex": "1", "name": "Ethereum", "shortName": "ETH"},
+                    {"chainIndex": "56", "name": "BNB Smart Chain", "shortName": "BSC"},
+                    {"chainIndex": "501", "name": "Solana", "shortName": "SOL"},
+                ],
+            },
+        )
+
+    httpx_mock.add_callback(
+        supported_chains_response,
         method="GET",
         url="https://web3.okx.com/api/v6/dex/balance/supported/chain",
-        json={
-            "code": "0",
-            "msg": "success",
-            "data": [
-                {"chainIndex": "1", "chainName": "Ethereum", "shortName": "ETH"},
-                {"chainIndex": "56", "chainName": "BNB Smart Chain", "shortName": "BSC"},
-                {"chainIndex": "501", "chainName": "Solana", "shortName": "SOL"},
-            ],
-        },
     )
 
     response = client.get("/api/onchain/chains")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -108,7 +109,7 @@ class OnChainProvider(Provider):
             ]
         unique_indexes = list(dict.fromkeys(indexes))
         if not unique_indexes:
-            raise ProviderError("At least one EVM chain is required")
+            return sorted(DEFAULT_EVM_CHAIN_INDEXES)
         return unique_indexes
 
     async def collect_snapshot(self) -> ProviderSnapshot:
@@ -164,9 +165,16 @@ def _extract_total_value(payload: dict[str, Any]) -> Decimal:
     return Decimal("0")
 
 
-async def collect_supported_evm_chains() -> list[dict[str, object]]:
+async def collect_supported_evm_chains(
+    secrets: Mapping[str, object] | None = None,
+) -> list[dict[str, object]]:
+    provider = OnChainProvider(channel_name="onchain", config={}, secrets=dict(secrets or {}))
+    path = "/api/v6/dex/balance/supported/chain"
     async with provider_http_client() as client:
-        response = await client.get(f"{OKX_DEX_BASE_URL}/api/v6/dex/balance/supported/chain")
+        response = await client.get(
+            f"{OKX_DEX_BASE_URL}{path}",
+            headers=provider._signature_headers("GET", path),
+        )
         response.raise_for_status()
         payload = response.json()
     if payload.get("code") != "0":

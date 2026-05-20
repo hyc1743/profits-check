@@ -481,9 +481,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         return [channel_payload(channel, cipher) for channel in list_channels(session)]
 
     @app.get("/api/onchain/chains")
-    def get_onchain_chains(_: object = Depends(require_session)):
+    def get_onchain_chains(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
         try:
-            return asyncio.run(collect_supported_evm_chains())
+            return asyncio.run(collect_supported_evm_chains(_get_okx_dex_secrets(session, cipher)))
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Failed to load EVM chains") from exc
 

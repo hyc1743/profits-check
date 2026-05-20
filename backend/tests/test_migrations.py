@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,7 +107,7 @@ def test_alembic_upgrade_adopts_existing_pre_alembic_database(tmp_path) -> None:
     assert "auth_sessions" in inspector.get_table_names()
     with engine.connect() as connection:
         assert connection.scalar(text("select count(*) from channels")) == 1
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0005"
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0006"
 
 
 def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> None:
@@ -124,7 +125,9 @@ def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> No
                 "(id, name, provider, kind, enabled, public_config_json, "
                 "secret_config_encrypted, created_at, updated_at) "
                 "values "
-                "(1, 'Legacy BSC', 'bsc', 'chain', 1, '{}', '{}', "
+                "(1, 'Legacy BSC', 'bsc', 'chain', 1, "
+                '\'{"walletAddresses":["0x367c518a67289e9bf6a18e0016aaea526d769459"]}\', '
+                "'{}', "
                 "'2026-05-09 00:00:00', '2026-05-09 00:00:00')"
             )
         )
@@ -153,4 +156,9 @@ def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> No
             connection.scalar(text("select provider from snapshot_assets where snapshot_id = 1"))
             == "onchain"
         )
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0005"
+        public_config = json.loads(
+            connection.scalar(text("select public_config_json from channels where id = 1"))
+        )
+        assert public_config["walletAddresses"] == ["0x367c518a67289e9bf6a18e0016aaea526d769459"]
+        assert public_config["chainIndexes"] == ["1", "56"]
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0006"
