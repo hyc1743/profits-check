@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Profits Check is a portfolio asset tracking application — connect crypto exchange accounts (CEX) and on-chain wallets (BSC), take snapshots, and view aggregated balances across channels in a single dashboard.
+Profits Check is a portfolio asset tracking application — connect crypto exchange accounts (CEX) and EVM on-chain wallets, take snapshots, and view aggregated balances across channels in a single dashboard.
 
 ## Development Commands
 
@@ -61,7 +61,7 @@ backend/src/profits_check_backend/
 │   ├── registry.py      # build_provider() factory — maps ProviderType → provider class
 │   ├── binance.py       # Binance spot account via REST API
 │   ├── gate.py, okx.py, bitget.py, bybit.py, aster.py  # Other CEX adapters
-│   ├── bsc.py           # BSC on-chain wallet balance via RPC
+│   ├── onchain.py       # EVM on-chain wallet token total value via OKX DEX API
 │   └── placeholders.py  # Fallback for unknown provider types
 └── services/
     ├── channels.py      # Channel CRUD, config encryption/decryption, AppSetting helpers
@@ -72,7 +72,7 @@ backend/src/profits_check_backend/
 
 **Data flow for a snapshot run**: `POST /api/snapshots/run` → `execute_snapshot_run()` iterates enabled channels → builds provider → calls `collect_snapshot()` → normalizes into `SnapshotAsset` rows → commits. `Snapshot.total_value_usd` is the sum of all asset USD values from that run.
 
-**Configuration**: `AppSettings` reads from env vars (`PROFITS_CHECK_` prefix or bare names like `DATABASE_URL`). The `AppSetting` DB table stores runtime-adjustable settings (snapshot interval, max parallel fetches, BSC RPC URL).
+**Configuration**: `AppSettings` reads from env vars (`PROFITS_CHECK_` prefix or bare names like `DATABASE_URL`). The `AppSetting` DB table stores runtime-adjustable settings such as snapshot schedule and OKX DEX API credentials.
 
 ### Frontend Structure
 

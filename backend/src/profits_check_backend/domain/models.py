@@ -10,5 +10,4 @@ class ProviderType(StrEnum):
     BITGET = "bitget"
     BYBIT = "bybit"
     ASTER = "aster"
-    BSC = "bsc"
     ONCHAIN = "onchain"

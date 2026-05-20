@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 
 class ProviderError(RuntimeError):
@@ -13,7 +14,7 @@ class AssetBalance:
     asset_symbol: str
     quantity: Decimal
     value_usd: Decimal | None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, eq=True)

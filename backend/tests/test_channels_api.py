@@ -1,6 +1,55 @@
 from __future__ import annotations
 
 
+def test_rejects_legacy_bsc_provider(client) -> None:
+    response = client.post(
+        "/api/channels",
+        json={
+            "provider": "bsc",
+            "kind": "chain",
+            "name": "Legacy BSC",
+            "publicConfig": {"walletAddresses": ["0x1111111111111111111111111111111111111111"]},
+            "secretConfig": {},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_get_onchain_chains_returns_only_evm_supported_chains(client, httpx_mock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        url="https://web3.okx.com/api/v6/dex/balance/supported/chain",
+        json={
+            "code": "0",
+            "msg": "success",
+            "data": [
+                {"chainIndex": "1", "chainName": "Ethereum", "shortName": "ETH"},
+                {"chainIndex": "56", "chainName": "BNB Smart Chain", "shortName": "BSC"},
+                {"chainIndex": "501", "chainName": "Solana", "shortName": "SOL"},
+            ],
+        },
+    )
+
+    response = client.get("/api/onchain/chains")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "chainIndex": "1",
+            "chainName": "Ethereum",
+            "shortName": "ETH",
+            "defaultSelected": True,
+        },
+        {
+            "chainIndex": "56",
+            "chainName": "BNB Smart Chain",
+            "shortName": "BSC",
+            "defaultSelected": True,
+        },
+    ]
+
+
 def test_create_channel_masks_secret_and_test_connection(client) -> None:
     from decimal import Decimal
 

@@ -171,39 +171,25 @@ async def test_binance_provider_uses_secret_api_key_and_default_base_url(httpx_m
 
 
 @pytest.mark.asyncio
-async def test_bsc_provider_collects_native_and_token_balances(httpx_mock) -> None:
-    from profits_check_backend.providers.bsc import OnChainProvider
+async def test_onchain_provider_collects_token_total_value_for_multiple_wallets(httpx_mock) -> None:
+    from profits_check_backend.providers.onchain import OnChainProvider
 
     httpx_mock.add_response(
         method="GET",
-        url="https://web3.okx.com/api/v6/dex/balance/all-token-balances-by-address?address=0x1111111111111111111111111111111111111111&chains=56&excludeRiskToken=1",
+        url="https://web3.okx.com/api/v6/dex/balance/total-value-by-address?address=0x1111111111111111111111111111111111111111&chains=1,56&assetType=1&excludeRiskToken=true",
         json={
             "code": "0",
             "msg": "success",
-            "data": [
-                {
-                    "tokenAssets": [
-                        {
-                            "chainIndex": "56",
-                            "tokenContractAddress": "",
-                            "symbol": "BNB",
-                            "balance": "2",
-                            "tokenPrice": "600",
-                            "isRiskToken": False,
-                            "address": "0x1111111111111111111111111111111111111111",
-                        },
-                        {
-                            "chainIndex": "56",
-                            "tokenContractAddress": "0x55d398326f99059fF775485246999027B3197955",
-                            "symbol": "USDT",
-                            "balance": "2.5",
-                            "tokenPrice": "1",
-                            "isRiskToken": False,
-                            "address": "0x1111111111111111111111111111111111111111",
-                        },
-                    ]
-                }
-            ],
+            "data": [{"totalValue": "1202.5"}],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://web3.okx.com/api/v6/dex/balance/total-value-by-address?address=0x2222222222222222222222222222222222222222&chains=1,56&assetType=1&excludeRiskToken=true",
+        json={
+            "code": "0",
+            "msg": "success",
+            "data": [{"totalValue": "300"}],
         },
     )
 
@@ -216,7 +202,11 @@ async def test_bsc_provider_collects_native_and_token_balances(httpx_mock) -> No
     provider = OnChainProvider(
         channel_name="Wallet",
         config={
-            "walletAddress": "0x1111111111111111111111111111111111111111",
+            "walletAddresses": [
+                "0x1111111111111111111111111111111111111111",
+                "0x2222222222222222222222222222222222222222",
+            ],
+            "chainIndexes": ["1", "56"],
         },
         secrets={},
         now_factory=lambda: "2026-05-09T00:00:00.000Z",
@@ -224,19 +214,31 @@ async def test_bsc_provider_collects_native_and_token_balances(httpx_mock) -> No
 
     snapshot = await provider.collect_snapshot()
 
-    assert snapshot.total_value_usd == Decimal("1202.5")
+    assert snapshot.total_value_usd == Decimal("1502.5")
     assert len(snapshot.assets) == 2
     assert snapshot.assets[0] == AssetBalance(
-        asset_symbol="BNB",
-        quantity=Decimal("2"),
-        value_usd=Decimal("1200"),
-        metadata={"source": "onchain", "type": "native", "chainIndex": "56", "tokenPrice": "600"},
+        asset_symbol="ONCHAIN_TOTAL",
+        quantity=Decimal("0"),
+        value_usd=Decimal("1202.5"),
+        metadata={
+            "source": "onchain",
+            "type": "token_total",
+            "walletAddress": "0x1111111111111111111111111111111111111111",
+            "chainIndexes": ["1", "56"],
+            "assetType": "1",
+        },
     )
     assert snapshot.assets[1] == AssetBalance(
-        asset_symbol="USDT",
-        quantity=Decimal("2.5"),
-        value_usd=Decimal("2.5"),
-        metadata={"source": "onchain", "type": "token", "chainIndex": "56", "tokenPrice": "1"},
+        asset_symbol="ONCHAIN_TOTAL",
+        quantity=Decimal("0"),
+        value_usd=Decimal("300"),
+        metadata={
+            "source": "onchain",
+            "type": "token_total",
+            "walletAddress": "0x2222222222222222222222222222222222222222",
+            "chainIndexes": ["1", "56"],
+            "assetType": "1",
+        },
     )
 
 
@@ -464,8 +466,7 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
         url=(
-            "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list"
-            "?algoOrdType=spot_dca&limit=100"
+            "https://www.okx.com/api/v5/tradingBot/dca/ongoing-list?algoOrdType=spot_dca&limit=100"
         ),
         json={
             "code": "0",
@@ -587,8 +588,7 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
     httpx_mock.add_response(
         method="GET",
         url=(
-            "https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-details"
-            "?algoId=recurring-1"
+            "https://www.okx.com/api/v5/tradingBot/recurring/orders-algo-details?algoId=recurring-1"
         ),
         json={
             "code": "0",
@@ -617,8 +617,12 @@ async def test_okx_provider_collects_strategy_assets(httpx_mock) -> None:
     snapshot = await provider.collect_snapshot()
 
     assert snapshot.total_value_usd == Decimal("2500")
-    strategy_assets = [asset for asset in snapshot.assets if asset.metadata["type"].startswith("strategy_")]
-    assert all(asset.metadata["portfolioAccounting"] == "informational" for asset in strategy_assets)
+    strategy_assets = [
+        asset for asset in snapshot.assets if asset.metadata["type"].startswith("strategy_")
+    ]
+    assert all(
+        asset.metadata["portfolioAccounting"] == "informational" for asset in strategy_assets
+    )
     assert {asset.metadata["type"] for asset in strategy_assets} == {
         "strategy_grid",
         "strategy_contract_grid",

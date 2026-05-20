@@ -14,14 +14,14 @@ const summaryPayload = {
   assetCount: 2,
   accountCategoryTotals: [
     {
-      provider: 'bsc',
-      channelName: 'BSC Wallets',
-      accountScope: 'wallet:0x1111',
+      provider: 'onchain',
+      channelName: 'EVM Wallets',
+      accountScope: 'token_total',
       valueUsd: '4025.00000000',
       assetCount: 2,
     },
   ],
-  channels: [{ provider: 'bsc', name: 'BSC Wallets', latestSnapshotTotalUsd: '4025.00000000' }],
+  channels: [{ provider: 'onchain', name: 'EVM Wallets', latestSnapshotTotalUsd: '4025.00000000' }],
 }
 
 const liveSummaryPayload = {
@@ -50,23 +50,30 @@ const liveSummaryPayload = {
       assetCount: 1,
     },
   ],
-  channels: [{ provider: 'bsc', name: 'BSC Wallets', latestSnapshotTotalUsd: '5250.00000000' }],
+  channels: [{ provider: 'onchain', name: 'EVM Wallets', latestSnapshotTotalUsd: '5250.00000000' }],
 }
 
 const channelsPayload = [
   {
     id: 1,
-    name: 'BSC Wallets',
+    name: 'EVM Wallets',
     provider: 'onchain',
     kind: 'chain',
     enabled: true,
     publicConfig: {
       walletAddresses: ['0x1111111111111111111111111111111111111111'],
+      chainIndexes: ['1', '56'],
     },
     secretConfigured: false,
     secretConfigMask: {},
     lastTestStatus: 'ok',
   },
+]
+
+const onchainChainsPayload = [
+  { chainIndex: '1', chainName: 'Ethereum', shortName: 'ETH', defaultSelected: true },
+  { chainIndex: '56', chainName: 'BNB Smart Chain', shortName: 'BSC', defaultSelected: true },
+  { chainIndex: '137', chainName: 'Polygon', shortName: 'POL', defaultSelected: false },
 ]
 
 const snapshotsPayload = [
@@ -153,6 +160,7 @@ function installHandlers() {
     http.get('/api/summary/latest', () => HttpResponse.json(summaryPayload)),
     http.get('/api/summary/live', () => HttpResponse.json(liveSummaryPayload)),
     http.get('/api/channels', () => HttpResponse.json(channelsPayload)),
+    http.get('/api/onchain/chains', () => HttpResponse.json(onchainChainsPayload)),
     http.get('/api/snapshots/series', () => HttpResponse.json(snapshotsPayload)),
     http.get('/api/schedule', () => HttpResponse.json(schedulePayload)),
     http.get('/api/system/scheduler', () => HttpResponse.json(schedulerPayload)),
@@ -252,7 +260,7 @@ test('renders dashboard data and latest snapshot detail', async () => {
   expect(screen.getByText('渠道占比与账户类别。')).toBeInTheDocument()
   expect(screen.getByRole('table', { name: '资产走势数据' })).toBeInTheDocument()
   expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
-  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
+  expect(screen.getByText('EVM Wallets · 链上代币总估值')).not.toBeVisible()
 
   const totalAssetMetric = screen.getAllByText('总资产')[0].closest('.metric-card')
   const trendHeading = screen.getByRole('heading', { name: '资产走势' })
@@ -287,17 +295,17 @@ test('keeps asset distribution details collapsed until opened', async () => {
 
   expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
   expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
-  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
+  expect(screen.getByText('EVM Wallets · 链上代币总估值')).not.toBeVisible()
 
   await user.click(screen.getByText('渠道占比'))
 
   expect(screen.getByRole('list', { name: '渠道占比数据' })).toBeVisible()
   expect(screen.getByText('100%')).toBeInTheDocument()
-  expect(screen.getByText('BSC Wallets · wallet:0x1111')).not.toBeVisible()
+  expect(screen.getByText('EVM Wallets · 链上代币总估值')).not.toBeVisible()
 
   await user.click(screen.getByText('按账户类别'))
 
-  expect(screen.getByText('BSC Wallets · wallet:0x1111')).toBeVisible()
+  expect(screen.getByText('EVM Wallets · 链上代币总估值')).toBeVisible()
 })
 
 test('live refresh shows account categories', async () => {
@@ -546,6 +554,45 @@ test('switches channel form fields for onchain and runs manual snapshot', async 
 
   await waitFor(() => {
     expect(screen.getByText(/快照执行完成/)).toBeInTheDocument()
+  })
+})
+
+test('saves onchain channel with selected EVM chains and no BSC provider option', async () => {
+  installHandlers()
+  const createdPayloads: Array<Record<string, unknown>> = []
+  server.use(
+    http.post('/api/channels', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      createdPayloads.push(body)
+      return HttpResponse.json({ id: 2, enabled: true, secretConfigured: false, secretConfigMask: {}, ...body }, { status: 201 })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  const providerSelect = await screen.findByLabelText('渠道')
+  expect(within(providerSelect).queryByRole('option', { name: 'BSC' })).not.toBeInTheDocument()
+
+  await user.type(screen.getByLabelText('名称'), 'EVM Wallets')
+  await user.selectOptions(providerSelect, 'onchain')
+  await user.type(screen.getByLabelText('钱包地址'), '0x1111111111111111111111111111111111111111')
+  expect(await screen.findByRole('checkbox', { name: /Ethereum/ })).toBeChecked()
+  expect(screen.getByRole('checkbox', { name: /BNB Smart Chain/ })).toBeChecked()
+  await user.click(screen.getByRole('checkbox', { name: /Polygon/ }))
+  await user.click(screen.getByRole('button', { name: '保存渠道' }))
+
+  await waitFor(() => expect(createdPayloads).toHaveLength(1))
+  expect(createdPayloads[0]).toMatchObject({
+    provider: 'onchain',
+    kind: 'chain',
+    name: 'EVM Wallets',
+    publicConfig: {
+      walletAddresses: ['0x1111111111111111111111111111111111111111'],
+      chainIndexes: ['1', '56', '137'],
+    },
+    secretConfig: {},
   })
 })
 

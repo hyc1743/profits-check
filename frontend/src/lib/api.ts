@@ -71,6 +71,13 @@ export interface ScheduleResponse {
   okxDexSecretConfigured?: boolean
 }
 
+export interface OnchainChainOption {
+  chainIndex: string
+  chainName: string
+  shortName: string
+  defaultSelected: boolean
+}
+
 export interface SchedulerResponse {
   enabled: boolean
   snapshot_schedule_times: string
@@ -210,6 +217,7 @@ export const api = {
   getLatestSummary: () => requestJson<SummaryResponse>('/api/summary/latest'),
   getLiveSummary: () => requestJson<SummaryResponse>('/api/summary/live'),
   getChannels: () => requestJson<ChannelResponse[]>('/api/channels'),
+  getOnchainChains: () => requestJson<OnchainChainOption[]>('/api/onchain/chains'),
   createChannel: (payload: CreateChannelPayload) =>
     requestJson<ChannelResponse>('/api/channels', {
       method: 'POST',

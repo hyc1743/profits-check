@@ -106,4 +106,51 @@ def test_alembic_upgrade_adopts_existing_pre_alembic_database(tmp_path) -> None:
     assert "auth_sessions" in inspector.get_table_names()
     with engine.connect() as connection:
         assert connection.scalar(text("select count(*) from channels")) == 1
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260516_0004"
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0005"
+
+
+def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> None:
+    database_path = tmp_path / "legacy-bsc.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path}")
+
+    command.upgrade(config, "20260516_0004")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into channels "
+                "(id, name, provider, kind, enabled, public_config_json, "
+                "secret_config_encrypted, created_at, updated_at) "
+                "values "
+                "(1, 'Legacy BSC', 'bsc', 'chain', 1, '{}', '{}', "
+                "'2026-05-09 00:00:00', '2026-05-09 00:00:00')"
+            )
+        )
+        connection.execute(
+            text(
+                "insert into snapshots "
+                "(id, channel_id, status, total_value_usd, created_at) "
+                "values (1, 1, 'success', 10, '2026-05-09 00:00:00')"
+            )
+        )
+        connection.execute(
+            text(
+                "insert into snapshot_assets "
+                "(snapshot_id, provider, account_scope, asset_symbol, quantity, available, "
+                "locked, borrowed, unrealized_pnl, value_usd, raw_payload_json) "
+                "values "
+                "(1, 'bsc', 'wallet:0x1111', 'BNB', 1, 1, 0, 0, 0, 10, '{}')"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("select provider from channels where id = 1")) == "onchain"
+        assert (
+            connection.scalar(text("select provider from snapshot_assets where snapshot_id = 1"))
+            == "onchain"
+        )
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0005"

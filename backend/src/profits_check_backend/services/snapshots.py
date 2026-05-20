@@ -16,7 +16,7 @@ from profits_check_backend.security import SecretCipher
 from profits_check_backend.services.channels import decode_public_config, decode_secret_config
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-OKX_DEX_PROVIDER_TYPES = {"bsc", "onchain"}
+OKX_DEX_PROVIDER_TYPES = {"onchain"}
 
 
 def _get_okx_dex_secrets(session: Session, cipher: SecretCipher) -> dict[str, str]:

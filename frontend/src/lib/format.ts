@@ -26,7 +26,10 @@ export function formatUsdCompact(value: string | number | null | undefined): str
 }
 
 export function humanizeProvider(value: string): string {
-  return value.toUpperCase()
+  const names: Record<string, string> = {
+    onchain: 'On Chain',
+  }
+  return names[value.toLowerCase()] ?? value.toUpperCase()
 }
 
 export function humanizeStatus(value: string | null | undefined): string {
@@ -67,6 +70,9 @@ export function humanizeAccountScope(value: string): string {
   }
   if (normalized === 'earn') {
     return '理财'
+  }
+  if (normalized === 'token_total') {
+    return '链上代币总估值'
   }
   return value
 }

@@ -4,7 +4,7 @@ Profits Check 是一个加密资产看板，用于连接交易所账户和链上
 
 ## 功能
 
-- **多渠道接入**：支持 Binance、Gate、OKX、Bitget、Bybit、Aster，以及 BSC / 链上钱包。
+- **多渠道接入**：支持 Binance、Gate、OKX、Bitget、Bybit、Aster，以及 EVM 链上钱包。
 - **资产快照**：保存每次资产统计结果，用于查看历史变化。
 - **实时刷新**：从已配置渠道拉取实时余额。
 - **资产分布**：按渠道和账户类型展示资产占比。
@@ -128,6 +128,9 @@ bun run dev
 | `PROFITS_CHECK_COOKIE_SECURE` | `false` | 站点通过 HTTPS 访问时建议设置为 `true` |
 | `PROFITS_CHECK_ALLOWED_HOSTS` | 空 | Vite 开发服务器允许的主机名；生产静态部署通常不需要 |
 | `PROFITS_CHECK_BACKEND_HOST` | `127.0.0.1` | `python3 run_dev.py` 启动后端时绑定的地址 |
+| `OKX_DEX_API_KEY` | 空 | OKX DEX API Key，用于读取 EVM 链上钱包总估值 |
+| `OKX_DEX_API_SECRET` | 空 | OKX DEX API Secret |
+| `OKX_DEX_API_PASSPHRASE` | 空 | OKX DEX API Passphrase |
 
 生成加密密钥：
 
@@ -178,7 +181,7 @@ backend/src/profits_check_backend/
 │   ├── base.py          # Provider 抽象基类
 │   ├── registry.py      # ProviderType 到 provider class 的工厂
 │   ├── binance.py, gate.py, okx.py, bitget.py, bybit.py, aster.py
-│   └── bsc.py           # BSC 链上 RPC 适配
+│   └── onchain.py       # EVM 链上钱包总估值适配
 └── services/
     ├── channels.py      # 渠道 CRUD 和配置加密
     └── snapshots.py     # 快照执行和资产聚合

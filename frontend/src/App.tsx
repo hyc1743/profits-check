@@ -12,13 +12,14 @@ import {
   type ChannelResponse,
   type CreateChannelPayload,
   type LiquidationMonitorResponse,
+  type OnchainChainOption,
   type SnapshotItem,
   type ScheduleResponse,
   type UpdateLiquidationMonitorPayload,
 } from './lib/api'
 import { formatUsd, humanizeAccountScope, humanizeProvider, humanizeStatus } from './lib/format'
 
-const channelProviders = ['binance', 'gate', 'okx', 'bitget', 'bybit', 'aster', 'onchain', 'bsc'] as const
+const channelProviders = ['binance', 'gate', 'okx', 'bitget', 'bybit', 'aster', 'onchain'] as const
 const channelKinds = ['cex', 'dex', 'chain'] as const
 
 const channelSchema = z.object({
@@ -32,6 +33,7 @@ const channelSchema = z.object({
   asterSigner: z.string().optional(),
   asterPrivateKey: z.string().optional(),
   walletAddresses: z.string().optional(),
+  chainIndexes: z.array(z.string()).optional(),
 })
 
 type ChannelFormValues = z.infer<typeof channelSchema>
@@ -1094,7 +1096,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                   <div key={`${item.channelName}-${item.accountScope}`} className="account-row">
                     <div>
                       <strong>{`${item.channelName} · ${humanizeAccountScope(item.accountScope)}`}</strong>
-                      <span>{`${humanizeProvider(item.provider)} · ${item.assetCount} 个币种`}</span>
+                      <span>{`${humanizeProvider(item.provider)} · ${item.assetCount} 条记录`}</span>
                     </div>
                     <em>{formatUsd(item.valueUsd)}</em>
                   </div>
@@ -1578,6 +1580,7 @@ function ChannelForm({
           asterSigner: editingChannel.secretConfigMask.signer || '',
           asterPrivateKey: editingChannel.secretConfigMask.privateKey || '',
           walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
+          chainIndexes: (editingChannel.publicConfig.chainIndexes as string[]) ?? [],
         }
       : {
           name: '',
@@ -1590,11 +1593,18 @@ function ChannelForm({
           asterSigner: '',
           asterPrivateKey: '',
           walletAddresses: '',
+          chainIndexes: [],
         },
   })
 
-  const { register, handleSubmit, formState: { errors }, control } = form
+  const { register, handleSubmit, formState: { errors }, control, setValue } = form
   const provider = useWatch({ control, name: 'provider' })
+  const selectedChainIndexes = useWatch({ control, name: 'chainIndexes' }) ?? []
+  const onchainChainsQuery = useQuery({
+    queryKey: ['onchain-chains'],
+    queryFn: api.getOnchainChains,
+    enabled: provider === 'onchain',
+  })
 
   useEffect(() => {
     if (editingChannel) {
@@ -1611,6 +1621,7 @@ function ChannelForm({
         asterSigner: editingChannel.secretConfigMask.signer || '',
         asterPrivateKey: editingChannel.secretConfigMask.privateKey || '',
         walletAddresses: (editingChannel.publicConfig.walletAddresses as string[])?.join('\n') ?? '',
+        chainIndexes: (editingChannel.publicConfig.chainIndexes as string[]) ?? [],
       })
     } else {
       form.reset({
@@ -1624,12 +1635,26 @@ function ChannelForm({
         asterSigner: '',
         asterPrivateKey: '',
         walletAddresses: '',
+        chainIndexes: [],
       })
     }
   }, [editingChannel, form])
+
+  useEffect(() => {
+    if (provider !== 'onchain' || selectedChainIndexes.length > 0) {
+      return
+    }
+    const defaultIndexes = (onchainChainsQuery.data ?? [])
+      .filter((chain: OnchainChainOption) => chain.defaultSelected)
+      .map((chain: OnchainChainOption) => chain.chainIndex)
+    if (defaultIndexes.length > 0) {
+      setValue('chainIndexes', defaultIndexes, { shouldDirty: true })
+    }
+  }, [onchainChainsQuery.data, provider, selectedChainIndexes.length, setValue])
+
   const apiKey = useWatch({ control, name: 'apiKey' })
   const apiSecret = useWatch({ control, name: 'apiSecret' })
-  const isOnChain = provider === 'onchain' || provider === 'bsc'
+  const isOnChain = provider === 'onchain'
   const isAster = provider === 'aster'
   const usesWalletAddress = isOnChain || isAster
   const isPassphraseProvider = provider === 'okx' || provider === 'bitget'
@@ -1647,6 +1672,9 @@ function ChannelForm({
             .split('\n')
             .map((item) => item.trim())
             .filter(Boolean)
+          if (isOnChain) {
+            publicConfig.chainIndexes = values.chainIndexes ?? []
+          }
         }
 
         if (isAster) {
@@ -1695,7 +1723,6 @@ function ChannelForm({
           <option value="bybit">Bybit</option>
           <option value="aster">Aster</option>
           <option value="onchain">On Chain</option>
-          <option value="bsc">BSC</option>
         </select>
       </Field>
 
@@ -1709,6 +1736,29 @@ function ChannelForm({
           <Field label="钱包地址" error={errors.walletAddresses?.message}>
             <textarea rows={3} {...register('walletAddresses')} />
           </Field>
+          {isOnChain ? (
+            <fieldset className="chain-picker">
+              <legend>EVM 链</legend>
+              {onchainChainsQuery.isError ? (
+                <p className="field-error" role="alert">
+                  EVM 链列表加载失败。
+                </p>
+              ) : null}
+              <div className="chain-picker-grid">
+                {(onchainChainsQuery.data ?? []).map((chain) => (
+                  <label key={chain.chainIndex} className="chain-option">
+                    <input
+                      type="checkbox"
+                      value={chain.chainIndex}
+                      {...register('chainIndexes')}
+                    />
+                    <span>{chain.chainName}</span>
+                    <em>{chain.shortName}</em>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
           {isAster ? (
             <>
               <Field label="User Wallet" error={errors.asterUser?.message}>

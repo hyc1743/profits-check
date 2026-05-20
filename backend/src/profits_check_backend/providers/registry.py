@@ -6,10 +6,10 @@ from profits_check_backend.providers.aster import AsterProvider
 from profits_check_backend.providers.base import Provider
 from profits_check_backend.providers.binance import BinanceProvider
 from profits_check_backend.providers.bitget import BitgetProvider
-from profits_check_backend.providers.bsc import OnChainProvider
 from profits_check_backend.providers.bybit import BybitProvider
 from profits_check_backend.providers.gate import GateProvider
 from profits_check_backend.providers.okx import OkxProvider
+from profits_check_backend.providers.onchain import OnChainProvider
 from profits_check_backend.providers.placeholders import PlaceholderProvider
 
 CUSTOM_URL_KEYS = {
@@ -52,6 +52,6 @@ def build_provider(
         return BybitProvider(channel_name=channel_name, config=config, secrets=secrets)
     if provider_value == ProviderType.ASTER:
         return AsterProvider(channel_name=channel_name, config=config, secrets=secrets)
-    if provider_value == ProviderType.BSC or provider_value == ProviderType.ONCHAIN:
+    if provider_value == ProviderType.ONCHAIN:
         return OnChainProvider(channel_name=channel_name, config=config, secrets=secrets)
     return PlaceholderProvider(provider_value.value)

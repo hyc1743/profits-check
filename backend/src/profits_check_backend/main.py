@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from profits_check_backend.config import AppSettings, get_settings
 from profits_check_backend.db import build_session_factory, init_database
 from profits_check_backend.models import AppSetting, Channel, Snapshot, SnapshotAsset
+from profits_check_backend.providers.onchain import collect_supported_evm_chains
 from profits_check_backend.providers.registry import build_provider
 from profits_check_backend.security import (
     PASSWORD_SETTING_KEY,
@@ -80,6 +81,17 @@ CUSTOM_URL_KEYS = {
     "rpcUrl",
     "rpc_url",
 }
+
+
+def validate_onchain_public_config(config: dict[str, object]) -> None:
+    wallet_addresses = config.get("walletAddresses", [])
+    chain_indexes = config.get("chainIndexes", [])
+    if not isinstance(wallet_addresses, list) or not any(
+        str(item).strip() for item in wallet_addresses
+    ):
+        raise ValueError("At least one wallet address is required")
+    if not isinstance(chain_indexes, list) or not any(str(item).strip() for item in chain_indexes):
+        raise ValueError("At least one EVM chain is required")
 
 
 class LoginPayload(BaseModel):
@@ -468,6 +480,13 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     def get_channels(_: object = Depends(require_session), session: Session = Depends(get_session)):
         return [channel_payload(channel, cipher) for channel in list_channels(session)]
 
+    @app.get("/api/onchain/chains")
+    def get_onchain_chains(_: object = Depends(require_session)):
+        try:
+            return asyncio.run(collect_supported_evm_chains())
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Failed to load EVM chains") from exc
+
     @app.post("/api/channels", status_code=201)
     def post_channel(
         payload: ChannelPayload,
@@ -476,6 +495,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     ):
         public_config = payload.merged_public_config()
         secret_config = payload.merged_secret_config()
+        if payload.provider_value() == "onchain":
+            try:
+                validate_onchain_public_config(public_config)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         channel = create_channel(
             session,
             cipher=cipher,
@@ -510,6 +534,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
         public_config = payload.merged_public_config()
         if public_config is not None:
+            provider_value = str(payload.provider or payload.provider_type or channel.provider)
+            if provider_value == "onchain":
+                try:
+                    validate_onchain_public_config(public_config)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
             channel.public_config_json = json.dumps(public_config)
 
         secret_config = payload.merged_secret_config()
@@ -540,7 +570,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Channel not found")
 
         secrets = decode_secret_config(channel, cipher)
-        if channel.provider in ("bsc", "onchain"):
+        if channel.provider == "onchain":
             secrets.update(_get_okx_dex_secrets(session, cipher))
         provider = app.state.provider_builder(
             provider_type=channel.provider,

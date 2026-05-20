@@ -12,36 +12,36 @@ def test_snapshot_run_persists_assets_and_summary(client) -> None:
                 total_value_usd=Decimal("4025"),
                 assets=[
                     AssetBalance(
-                        asset_symbol="BNB",
-                        quantity=Decimal("3.5"),
+                        asset_symbol="ONCHAIN_TOTAL",
+                        quantity=Decimal("0"),
                         value_usd=Decimal("2100"),
-                        metadata={"source": "bsc", "type": "native"},
+                        metadata={"source": "onchain", "type": "token_total"},
                     ),
                     AssetBalance(
-                        asset_symbol="USDT",
-                        quantity=Decimal("1925"),
+                        asset_symbol="ONCHAIN_TOTAL",
+                        quantity=Decimal("0"),
                         value_usd=Decimal("1925"),
-                        metadata={"source": "bsc", "type": "token"},
+                        metadata={"source": "onchain", "type": "token_total"},
                     ),
                 ],
             )
 
     client.app.state.provider_builder = lambda **_: StubProvider()
 
-    bsc_response = client.post(
+    onchain_response = client.post(
         "/api/channels",
         json={
-            "provider": "bsc",
+            "provider": "onchain",
             "kind": "chain",
-            "name": "BSC Wallets",
+            "name": "EVM Wallets",
             "publicConfig": {
                 "walletAddresses": ["0x1111111111111111111111111111111111111111"],
-                "tokens": [{"contractAddress": "0x2222222222222222222222222222222222222222"}],
+                "chainIndexes": ["1", "56"],
             },
             "secretConfig": {},
         },
     )
-    assert bsc_response.status_code == 201
+    assert onchain_response.status_code == 201
 
     run_response = client.post("/api/snapshots/run")
 
@@ -55,7 +55,7 @@ def test_snapshot_run_persists_assets_and_summary(client) -> None:
     assert summary_response.status_code == 200
     summary = summary_response.json()
     assert summary["totalValueUsd"] == "4025.00000000"
-    assert summary["channels"][0]["provider"] in {"bsc", "binance"}
+    assert summary["channels"][0]["provider"] in {"onchain", "binance"}
 
 
 def test_snapshot_history_returns_run_details(client) -> None:
