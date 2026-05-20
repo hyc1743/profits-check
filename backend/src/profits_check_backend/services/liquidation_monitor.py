@@ -47,6 +47,7 @@ class LiquidationMonitorConfig:
 class AlertSendResult:
     status: str
     sent: bool = False
+    attempted: bool = False
     error: str | None = None
 
 
@@ -249,7 +250,7 @@ async def run_liquidation_monitor(
                 )
                 model.last_alert_status = alert_result.status
                 model.last_alert_error = alert_result.error
-                model.last_alert_at = now if alert_result.sent else model.last_alert_at
+                model.last_alert_at = now if alert_result.attempted else model.last_alert_at
                 if alert_result.sent:
                     alert_count += 1
             elif model.status != "warning" and model.distance_percent is not None:
@@ -275,6 +276,9 @@ async def run_liquidation_monitor(
                 and config.alert_enabled
                 and (config.miao_code or config.bark_push_url)
                 and margin_model.status == "warning"
+                and should_send_margin_balance_alert(
+                    margin_model, now, config.alert_interval_seconds
+                )
             ):
                 alert_result = await send_liquidation_alert(
                     miao_code=config.miao_code,
@@ -287,7 +291,7 @@ async def run_liquidation_monitor(
                 )
                 margin_model.last_alert_status = alert_result.status
                 margin_model.last_alert_error = alert_result.error
-                margin_model.last_alert_at = now if alert_result.sent else None
+                margin_model.last_alert_at = now if alert_result.attempted else None
                 if alert_result.sent:
                     alert_count += 1
             margin_balances.append(margin_model)
@@ -424,11 +428,36 @@ def upsert_liquidation_margin_balance(
 def should_send_alert(
     position: LiquidationPosition, now: datetime, alert_interval_seconds: int
 ) -> bool:
-    if position.status != "warning":
+    return should_send_warning_alert(
+        status=position.status,
+        last_alert_at=position.last_alert_at,
+        now=now,
+        alert_interval_seconds=alert_interval_seconds,
+    )
+
+
+def should_send_margin_balance_alert(
+    margin_balance: LiquidationMarginBalance, now: datetime, alert_interval_seconds: int
+) -> bool:
+    return should_send_warning_alert(
+        status=margin_balance.status,
+        last_alert_at=margin_balance.last_alert_at,
+        now=now,
+        alert_interval_seconds=alert_interval_seconds,
+    )
+
+
+def should_send_warning_alert(
+    *,
+    status: str,
+    last_alert_at: datetime | None,
+    now: datetime,
+    alert_interval_seconds: int,
+) -> bool:
+    if status != "warning":
         return False
-    if position.last_alert_at is None:
+    if last_alert_at is None:
         return True
-    last_alert_at = position.last_alert_at
     if last_alert_at.tzinfo is None:
         last_alert_at = last_alert_at.replace(tzinfo=UTC)
     return now - last_alert_at >= timedelta(seconds=alert_interval_seconds)
@@ -508,14 +537,20 @@ async def send_liquidation_alert(
         if bark_result.get("status") != "sent" and bark_result.get("error"):
             errors.append(str(bark_result["error"]))
 
-    status_source = miao_result or bark_result or {"status": "failed"}
-    sent = any(
-        result is not None and result.get("status") == "sent"
-        for result in (miao_result, bark_result)
-    )
+    attempted = miao_result is not None or bark_result is not None
+    if miao_result is not None:
+        sent = miao_result.get("status") == "sent"
+        status = "sent" if sent else miao_result.get("status", "failed")
+    elif bark_result is not None:
+        sent = bark_result.get("status") == "sent"
+        status = bark_result.get("status", "failed")
+    else:
+        sent = False
+        status = "failed"
     return AlertSendResult(
-        status=status_source["status"],
+        status=status,
         sent=sent,
+        attempted=attempted,
         error="; ".join(errors) if errors else None,
     )
 

@@ -430,9 +430,7 @@ def test_manual_refresh_sends_bark_message_for_position_risk(client, httpx_mock)
     bark_payload = json.loads(request.read().decode())
     assert bark_payload["title"] == "OKX BTC-USDT-SWAP LONG"
     assert bark_payload["body"] == (
-        "OKX BTC-USDT-SWAP LONG\n"
-        "Current price: 58100\n"
-        "Liquidation price: 58000"
+        "OKX BTC-USDT-SWAP LONG\nCurrent price: 58100\nLiquidation price: 58000"
     )
 
 
@@ -482,6 +480,68 @@ def test_manual_refresh_sends_bark_message_for_margin_balance_risk(client, httpx
     bark_payload = json.loads(request.read().decode())
     assert bark_payload["title"] == "Bybit risk ratio"
     assert bark_payload["body"] == "Bybit\nRisk ratio: 65%"
+
+
+def test_margin_balance_risk_requires_miaotixing_phone_success_when_configured(
+    client, httpx_mock
+) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return []
+
+        async def collect_contract_margin_balance(self):
+            return margin_balance(provider="bybit", channel_name="Bybit")
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "bybit",
+            "kind": "cex",
+            "name": "Bybit",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": True,
+            "marginBalanceThresholdPercent": "70",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+            "miaoCode": "miao-123",
+            "barkPushUrl": "https://bark.example.com/device-key",
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://miaotixing.com/trigger",
+        json={
+            "code": 0,
+            "msg": "完成",
+            "data": {"success_sent": {"mptext": 1, "sms": 0, "phonecall": 0}},
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://bark.example.com/device-key",
+        json={"code": 200, "message": "success"},
+    )
+
+    refresh_response = client.post("/api/liquidation-monitor/refresh")
+
+    assert refresh_response.status_code == 200
+    payload = refresh_response.json()
+    assert payload["alertCount"] == 0
+    assert payload["marginBalances"][0]["lastAlertStatus"] == "warning"
+    assert payload["marginBalances"][0]["lastAlertAt"] is not None
+    assert (
+        "Miaotixing did not report a phone call" in payload["marginBalances"][0]["lastAlertError"]
+    )
 
 
 def test_bark_failure_does_not_block_miaotixing_success(client, httpx_mock) -> None:
@@ -597,6 +657,73 @@ def test_liquidation_monitor_uses_configured_alert_interval(client, httpx_mock) 
     assert third["alertCount"] == 1
 
 
+def test_margin_balance_alert_uses_configured_alert_interval(client, httpx_mock) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return []
+
+        async def collect_contract_margin_balance(self):
+            return margin_balance()
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": True,
+            "marginBalanceThresholdPercent": "70",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+            "miaoCode": "miao-123",
+        },
+    )
+    for _ in range(2):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://miaotixing.com/trigger",
+            json={
+                "code": 0,
+                "msg": "完成",
+                "data": {"success_sent": {"mptext": 1, "sms": 0, "phonecall": 1}},
+            },
+        )
+
+    now = datetime(2026, 5, 12, 8, 0, tzinfo=UTC)
+
+    def run_at(timestamp):
+        with client.app.state.session_factory() as session:
+            channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=client.app.state.cipher,
+                    provider_builder=client.app.state.provider_builder,
+                    now=timestamp,
+                )
+            )
+
+    first = run_at(now)
+    second = run_at(now + timedelta(seconds=119))
+    third = run_at(now + timedelta(seconds=120))
+
+    assert first["alertCount"] == 1
+    assert second["alertCount"] == 0
+    assert third["alertCount"] == 1
+
+
 def test_liquidation_monitor_test_alert_uses_configured_miao_code(client, httpx_mock) -> None:
     client.put(
         "/api/liquidation-monitor",
@@ -624,9 +751,7 @@ def test_liquidation_monitor_test_alert_uses_configured_miao_code(client, httpx_
     assert response.json()["status"] == "sent"
 
 
-def test_liquidation_monitor_test_miaotixing_alert_only_uses_miao_code(
-    client, httpx_mock
-) -> None:
+def test_liquidation_monitor_test_miaotixing_alert_only_uses_miao_code(client, httpx_mock) -> None:
     client.put(
         "/api/liquidation-monitor",
         json={
