@@ -76,7 +76,6 @@ class BybitProvider(Provider):
             return ProviderSnapshot(total_value_usd=Decimal("0"), assets=[])
 
         account = accounts[0]
-        total_value = Decimal(str(account.get("totalWalletBalance", "0")))
         assets: list[AssetBalance] = []
         for item in account.get("coin", []):
             quantity = Decimal(str(item.get("equity", item.get("walletBalance", "0"))))
@@ -90,6 +89,13 @@ class BybitProvider(Provider):
                     metadata={"source": "bybit", "type": "unified"},
                 )
             )
+        asset_total_value = sum(
+            (asset.value_usd for asset in assets if asset.value_usd is not None),
+            Decimal("0"),
+        )
+        equity_total_value = Decimal(str(account.get("totalEquity", "0")))
+        wallet_total_value = Decimal(str(account.get("totalWalletBalance", "0")))
+        total_value = equity_total_value or asset_total_value or wallet_total_value
         return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
     async def collect_contract_positions(self) -> list[ContractPositionRisk]:

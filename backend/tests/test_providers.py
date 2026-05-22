@@ -834,6 +834,45 @@ async def test_bybit_provider_collects_unified_balances(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_bybit_provider_uses_coin_usd_values_when_wallet_total_excludes_assets(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/account/wallet-balance?accountType=UNIFIED",
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "totalEquity": "15471.73",
+                        "totalWalletBalance": "6971.73",
+                        "coin": [
+                            {"coin": "USDT", "equity": "6971.73", "usdValue": "6971.73"},
+                            {"coin": "USD1", "equity": "8500", "usdValue": "8500"},
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000000",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.total_value_usd == Decimal("15471.73")
+    assert [asset.asset_symbol for asset in snapshot.assets] == ["USDT", "USD1"]
+
+
+@pytest.mark.asyncio
 async def test_binance_provider_collects_contract_position_risk(httpx_mock) -> None:
     from profits_check_backend.providers.binance import BinanceProvider
 
