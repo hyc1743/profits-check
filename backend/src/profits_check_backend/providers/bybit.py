@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import time
 from decimal import Decimal
 from urllib.parse import urlencode
@@ -67,6 +68,16 @@ class BybitProvider(Provider):
             )
             response.raise_for_status()
             payload = response.json()
+            overview_params = {"valuationCurrency": "USD"}
+            overview_query_string = urlencode(overview_params)
+            overview_headers = self._signature_headers(overview_query_string)
+            overview_response = await client.get(
+                f"{base_url}/v5/asset/asset-overview",
+                headers=overview_headers,
+                params=overview_params,
+            )
+            overview_response.raise_for_status()
+            overview_payload = overview_response.json()
 
         if payload.get("retCode") not in {0, "0"}:
             raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
@@ -78,15 +89,24 @@ class BybitProvider(Provider):
         account = accounts[0]
         assets: list[AssetBalance] = []
         for item in account.get("coin", []):
-            quantity = Decimal(str(item.get("equity", item.get("walletBalance", "0"))))
-            if quantity == 0:
+            wallet_balance = Decimal(str(item.get("walletBalance", item.get("equity", "0"))))
+            equity = Decimal(str(item.get("equity", wallet_balance)))
+            borrowed = _first_decimal(item, "borrowAmount", "spotBorrow")
+            value_usd = Decimal(str(item.get("usdValue", "0")))
+            if wallet_balance == 0 and equity == 0 and borrowed == 0 and value_usd == 0:
                 continue
             assets.append(
                 AssetBalance(
                     asset_symbol=str(item.get("coin", "")).upper(),
-                    quantity=quantity,
-                    value_usd=Decimal(str(item.get("usdValue", "0"))),
-                    metadata={"source": "bybit", "type": "unified"},
+                    quantity=wallet_balance,
+                    value_usd=value_usd,
+                    metadata={
+                        "source": "bybit",
+                        "type": "unified",
+                        "equity": str(equity),
+                        "borrowed": str(borrowed),
+                        "walletBalance": str(wallet_balance),
+                    },
                 )
             )
         asset_total_value = sum(
@@ -96,6 +116,11 @@ class BybitProvider(Provider):
         equity_total_value = Decimal(str(account.get("totalEquity", "0")))
         wallet_total_value = Decimal(str(account.get("totalWalletBalance", "0")))
         total_value = equity_total_value or asset_total_value or wallet_total_value
+        if overview_payload.get("retCode") in {0, "0"}:
+            overview_assets, overview_total_value = _asset_overview_balances(overview_payload)
+            assets.extend(overview_assets)
+            if overview_total_value != 0:
+                total_value = overview_total_value
         return ProviderSnapshot(total_value_usd=total_value, assets=assets)
 
     async def collect_contract_positions(self) -> list[ContractPositionRisk]:
@@ -180,6 +205,66 @@ def _optional_decimal(value: object) -> Decimal | None:
         return None
     parsed = Decimal(str(value))
     return None if parsed == 0 else parsed
+
+
+def _first_decimal(item: dict[str, object], *keys: str) -> Decimal:
+    for key in keys:
+        value = Decimal(str(item.get(key, "0") or "0"))
+        if value != 0:
+            return value
+    return Decimal("0")
+
+
+def _asset_overview_balances(payload: dict[str, object]) -> tuple[list[AssetBalance], Decimal]:
+    result = payload.get("result", {})
+    if not isinstance(result, dict):
+        return [], Decimal("0")
+
+    assets: list[AssetBalance] = []
+    total_value = Decimal(str(result.get("totalEquity", "0") or "0"))
+    for account in result.get("list", []):
+        if not isinstance(account, dict):
+            continue
+        account_type = str(account.get("accountType", ""))
+        account_scope = _asset_overview_scope(account_type)
+        if account_scope is None:
+            continue
+        account_total_value = Decimal(str(account.get("totalEquity", "0") or "0"))
+        if account_total_value != 0:
+            assets.append(
+                AssetBalance(
+                    asset_symbol=f"{account_scope.upper()}_TOTAL",
+                    quantity=Decimal("0"),
+                    value_usd=account_total_value,
+                    metadata={
+                        "source": "bybit",
+                        "type": account_scope,
+                        "accountType": account_type,
+                        "accountTotalEquity": str(account_total_value),
+                        "coinDetail": json.dumps(account.get("coinDetail", [])),
+                    },
+                )
+            )
+    return assets, total_value
+
+
+def _asset_overview_scope(account_type: str) -> str | None:
+    if account_type == "UnifiedTradingAccount":
+        return None
+    mapping = {
+        "CryptoLoans": "crypto_loans",
+        "FundingAccount": "funding",
+    }
+    return mapping.get(account_type, _camel_to_snake(account_type))
+
+
+def _camel_to_snake(value: str) -> str:
+    output = []
+    for index, char in enumerate(value):
+        if char.isupper() and index > 0:
+            output.append("_")
+        output.append(char.lower())
+    return "".join(output) or "asset_overview"
 
 
 def _optional_int(value: object) -> int | None:

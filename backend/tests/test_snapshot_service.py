@@ -58,6 +58,39 @@ def test_snapshot_run_persists_assets_and_summary(client) -> None:
     assert summary["channels"][0]["provider"] in {"onchain", "binance"}
 
 
+def test_provider_snapshot_to_balances_preserves_borrowed_metadata() -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.models import Channel
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+    from profits_check_backend.services.snapshots import provider_snapshot_to_balances
+
+    channel = Channel(id=1, provider="bybit", name="Bybit", kind="cex")
+    provider_snapshot = ProviderSnapshot(
+        total_value_usd=Decimal("5500"),
+        assets=[
+            AssetBalance(
+                asset_symbol="USDT",
+                quantity=Decimal("2000"),
+                value_usd=Decimal("-3000"),
+                metadata={
+                    "source": "bybit",
+                    "type": "unified",
+                    "borrowed": "5000",
+                },
+            )
+        ],
+    )
+
+    balances = provider_snapshot_to_balances(
+        channel=channel,
+        provider_snapshot=provider_snapshot,
+    )
+
+    assert balances[0].total == Decimal("2000")
+    assert balances[0].borrowed == Decimal("5000")
+
+
 def test_snapshot_history_returns_run_details(client) -> None:
     from decimal import Decimal
 

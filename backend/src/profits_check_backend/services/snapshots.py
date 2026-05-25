@@ -77,7 +77,7 @@ def provider_snapshot_to_balances(
                 total=item.quantity,
                 available=item.quantity,
                 locked=Decimal("0"),
-                borrowed=Decimal("0"),
+                borrowed=Decimal(str(item.metadata.get("borrowed", "0") or "0")),
                 unrealized_pnl=Decimal("0"),
                 value_usd=item.value_usd,
                 raw_payload=item.metadata,

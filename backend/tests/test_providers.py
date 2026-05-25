@@ -9,6 +9,14 @@ from profits_check_backend.providers.base import AssetBalance, ProviderError
 from profits_check_backend.providers.registry import build_provider
 
 
+def add_empty_bybit_asset_overview_response(httpx_mock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/asset/asset-overview?valuationCurrency=USD",
+        json={"retCode": 0, "result": {"totalEquity": "0", "list": []}},
+    )
+
+
 def add_empty_okx_strategy_responses(httpx_mock) -> None:
     for algo_ord_type in ("grid", "contract_grid"):
         httpx_mock.add_response(
@@ -819,6 +827,7 @@ async def test_bybit_provider_collects_unified_balances(httpx_mock) -> None:
             },
         },
     )
+    add_empty_bybit_asset_overview_response(httpx_mock)
 
     provider = BybitProvider(
         channel_name="Bybit",
@@ -858,6 +867,7 @@ async def test_bybit_provider_uses_coin_usd_values_when_wallet_total_excludes_as
             },
         },
     )
+    add_empty_bybit_asset_overview_response(httpx_mock)
 
     provider = BybitProvider(
         channel_name="Bybit",
@@ -870,6 +880,141 @@ async def test_bybit_provider_uses_coin_usd_values_when_wallet_total_excludes_as
 
     assert snapshot.total_value_usd == Decimal("15471.73")
     assert [asset.asset_symbol for asset in snapshot.assets] == ["USDT", "USD1"]
+
+
+@pytest.mark.asyncio
+async def test_bybit_provider_preserves_wallet_balance_and_borrowed_amount(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/account/wallet-balance?accountType=UNIFIED",
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "totalEquity": "5500",
+                        "totalWalletBalance": "10500",
+                        "coin": [
+                            {
+                                "coin": "USD1",
+                                "equity": "8500",
+                                "walletBalance": "8500",
+                                "usdValue": "8500",
+                                "borrowAmount": "0",
+                                "spotBorrow": "0",
+                            },
+                            {
+                                "coin": "USDT",
+                                "equity": "-3000",
+                                "walletBalance": "2000",
+                                "usdValue": "-3000",
+                                "borrowAmount": "5000",
+                                "spotBorrow": "5000",
+                            },
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    add_empty_bybit_asset_overview_response(httpx_mock)
+
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000000",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    usdt = next(asset for asset in snapshot.assets if asset.asset_symbol == "USDT")
+    assert snapshot.total_value_usd == Decimal("5500")
+    assert usdt.quantity == Decimal("2000")
+    assert usdt.value_usd == Decimal("-3000")
+    assert usdt.metadata["equity"] == "-3000"
+    assert usdt.metadata["borrowed"] == "5000"
+
+
+@pytest.mark.asyncio
+async def test_bybit_provider_collects_crypto_loans_from_asset_overview(
+    httpx_mock,
+) -> None:
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/account/wallet-balance?accountType=UNIFIED",
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "totalEquity": "136.82",
+                        "coin": [{"coin": "USDT", "equity": "127.456", "usdValue": "127.34"}],
+                    }
+                ]
+            },
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url="https://api.bybit.com/v5/asset/asset-overview?valuationCurrency=USD",
+        json={
+            "retCode": 0,
+            "result": {
+                "totalEquity": "3488.87",
+                "list": [
+                    {
+                        "accountType": "CryptoLoans",
+                        "totalEquity": "3348.59",
+                        "valuationCurrency": "USD",
+                        "coinDetail": [
+                            {"coin": "USDT", "equity": "-5200.0387"},
+                            {"coin": "USD1", "equity": "8553.52"},
+                        ],
+                    },
+                    {
+                        "accountType": "FundingAccount",
+                        "totalEquity": "3.44",
+                        "valuationCurrency": "USD",
+                        "coinDetail": [{"coin": "WLFI", "equity": "55.614135"}],
+                    },
+                    {
+                        "accountType": "UnifiedTradingAccount",
+                        "totalEquity": "136.82",
+                        "valuationCurrency": "USD",
+                        "coinDetail": [{"coin": "USDT", "equity": "127.456"}],
+                    },
+                ],
+            },
+        },
+    )
+
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1700000000000",
+    )
+
+    snapshot = await provider.collect_snapshot()
+
+    assert snapshot.total_value_usd == Decimal("3488.87")
+    crypto_loan_assets = [
+        asset for asset in snapshot.assets if asset.metadata["type"] == "crypto_loans"
+    ]
+    assert [(asset.asset_symbol, asset.value_usd) for asset in crypto_loan_assets] == [
+        ("CRYPTO_LOANS_TOTAL", Decimal("3348.59")),
+    ]
+    assert '"coin": "USD1"' in crypto_loan_assets[0].metadata["coinDetail"]
+    assert not any(
+        asset.metadata["type"] == "unified_trading_account" for asset in snapshot.assets
+    )
 
 
 @pytest.mark.asyncio
