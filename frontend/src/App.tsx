@@ -63,6 +63,12 @@ const liquidationMonitorSchema = z.object({
   positionThresholdPercent: z.string().regex(/^[1-9]\d*$/, '仓位风险阈值必须是正整数。'),
   marginBalanceMonitorEnabled: z.boolean(),
   marginBalanceThresholdPercent: z.string().regex(/^[1-9]\d*$/, '保证金余额阈值必须是正整数。'),
+  adlMonitorEnabled: z.boolean(),
+  adlThresholdPercent: z.string().regex(/^[1-9]\d*$/, 'ADL 减仓阈值必须是正整数。'),
+  adlWindowSeconds: z.coerce.number().int().positive('ADL 检测窗口必须是正整数秒。'),
+  adlSampleIntervalSeconds: z.coerce.number().int().positive('ADL 采样间隔必须是正整数秒。'),
+  adlStartTime: z.string().regex(/^\d{2}:\d{2}$/, 'ADL 开始时间格式必须是 HH:MM。'),
+  adlEndTime: z.string().regex(/^\d{2}:\d{2}$/, 'ADL 结束时间格式必须是 HH:MM。'),
   checkIntervalSeconds: z.coerce.number().int().positive('监控频率必须是正整数秒。'),
   alertIntervalSeconds: z.coerce.number().int().positive('提醒频率必须是正整数秒。'),
   miaoCode: z.string().optional(),
@@ -168,6 +174,11 @@ function humanizeAlertStatus(value: string | null | undefined) {
   if (value === 'warning') return '提醒未确认电话'
   if (value === 'failed') return '提醒失败'
   return '未提醒'
+}
+
+function humanizeAdlStatus(value: string | null | undefined) {
+  if (value === 'suspected') return '疑似 ADL'
+  return value || '未检测'
 }
 
 function formatFrequency(seconds: number) {
@@ -1369,7 +1380,8 @@ function LiquidationRiskPanel({
 }) {
   const positions = monitor?.positions ?? []
   const marginBalances = monitor?.marginBalances ?? []
-  const [activeView, setActiveView] = useState<'position' | 'margin'>('position')
+  const adlEvents = monitor?.adlEvents ?? []
+  const [activeView, setActiveView] = useState<'position' | 'margin' | 'adl'>('position')
 
   return (
     <div className="liquidation-block" id="risk">
@@ -1384,6 +1396,7 @@ function LiquidationRiskPanel({
       <div className="risk-tabs" role="tablist" aria-label="爆仓风险视图">
         <button type="button" className={activeView === 'position' ? 'active' : ''} onClick={() => setActiveView('position')}>仓位风险</button>
         <button type="button" className={activeView === 'margin' ? 'active' : ''} onClick={() => setActiveView('margin')}>保证金余额</button>
+        <button type="button" className={activeView === 'adl' ? 'active' : ''} onClick={() => setActiveView('adl')}>ADL 检测</button>
       </div>
       {activeView === 'position' ? (
         <div className="risk-list" aria-label="爆仓风险仓位">
@@ -1415,7 +1428,7 @@ function LiquidationRiskPanel({
             <p className="empty-copy">无合约仓位风险</p>
           )}
         </div>
-      ) : (
+      ) : activeView === 'margin' ? (
         <div className="risk-list" aria-label="爆仓风险保证金余额">
           {marginBalances.length > 0 ? (
             marginBalances.map((item) => (
@@ -1443,6 +1456,36 @@ function LiquidationRiskPanel({
             ))
           ) : (
             <p className="empty-copy">无保证金余额风险</p>
+          )}
+        </div>
+      ) : (
+        <div className="risk-list" aria-label="ADL 检测事件">
+          {adlEvents.length > 0 ? (
+            adlEvents.map((item) => (
+              <div key={item.id} className="risk-row risk-status-warning">
+                <div className="risk-main">
+                  <strong>{`${item.channelName} · ${item.symbol}`}</strong>
+                  <span>{`${item.side} · ${humanizeAdlStatus(item.status)}`}</span>
+                </div>
+                <div className="risk-metric">
+                  <span>减少</span>
+                  <strong>{formatPercent(item.dropPercent)}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>原数量</span>
+                  <strong>{item.previousQuantity}</strong>
+                </div>
+                <div className="risk-metric">
+                  <span>现数量</span>
+                  <strong>{item.currentQuantity}</strong>
+                </div>
+                <div className="risk-alert">
+                  {formatSnapshotTime(item.detectedAt)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="empty-copy">无 ADL 检测事件</p>
           )}
         </div>
       )}
@@ -1836,6 +1879,12 @@ function LiquidationMonitorForm({
       ),
       marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
       marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
+      adlMonitorEnabled: config?.adlMonitorEnabled ?? false,
+      adlThresholdPercent: formatIntegerInputValue(config?.adlThresholdPercent, '40'),
+      adlWindowSeconds: config?.adlWindowSeconds ?? 60,
+      adlSampleIntervalSeconds: config?.adlSampleIntervalSeconds ?? 30,
+      adlStartTime: config?.adlStartTime ?? '00:00',
+      adlEndTime: config?.adlEndTime ?? '23:59',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: config?.miaoCode ?? '',
@@ -1853,6 +1902,12 @@ function LiquidationMonitorForm({
       ),
       marginBalanceMonitorEnabled: config?.marginBalanceMonitorEnabled ?? false,
       marginBalanceThresholdPercent: formatIntegerInputValue(config?.marginBalanceThresholdPercent, '70'),
+      adlMonitorEnabled: config?.adlMonitorEnabled ?? false,
+      adlThresholdPercent: formatIntegerInputValue(config?.adlThresholdPercent, '40'),
+      adlWindowSeconds: config?.adlWindowSeconds ?? 60,
+      adlSampleIntervalSeconds: config?.adlSampleIntervalSeconds ?? 30,
+      adlStartTime: config?.adlStartTime ?? '00:00',
+      adlEndTime: config?.adlEndTime ?? '23:59',
       checkIntervalSeconds: config?.checkIntervalSeconds ?? 60,
       alertIntervalSeconds: config?.alertIntervalSeconds ?? 900,
       miaoCode: config?.miaoCode ?? '',
@@ -1867,11 +1922,17 @@ function LiquidationMonitorForm({
         const miaoCode = values.miaoCode?.trim()
         const barkPushUrl = values.barkPushUrl?.trim()
         onSubmit({
-          monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled,
+          monitorEnabled: values.positionMonitorEnabled || values.marginBalanceMonitorEnabled || values.adlMonitorEnabled,
           positionMonitorEnabled: values.positionMonitorEnabled,
           positionThresholdPercent: values.positionThresholdPercent,
           marginBalanceMonitorEnabled: values.marginBalanceMonitorEnabled,
           marginBalanceThresholdPercent: values.marginBalanceThresholdPercent,
+          adlMonitorEnabled: values.adlMonitorEnabled,
+          adlThresholdPercent: values.adlThresholdPercent,
+          adlWindowSeconds: values.adlWindowSeconds,
+          adlSampleIntervalSeconds: values.adlSampleIntervalSeconds,
+          adlStartTime: values.adlStartTime,
+          adlEndTime: values.adlEndTime,
           checkIntervalSeconds: values.checkIntervalSeconds,
           alertIntervalSeconds: values.alertIntervalSeconds,
           miaoCode,
@@ -1888,12 +1949,31 @@ function LiquidationMonitorForm({
           <input type="checkbox" {...register('marginBalanceMonitorEnabled')} />
           开启保证金余额监控
         </label>
+        <label className="toggle-label">
+          <input type="checkbox" {...register('adlMonitorEnabled')} />
+          开启 ADL 检测
+        </label>
       </div>
       <Field label="仓位风险阈值" error={errors.positionThresholdPercent?.message}>
         <input type="number" step="1" min="1" {...register('positionThresholdPercent')} />
       </Field>
       <Field label="保证金余额阈值" error={errors.marginBalanceThresholdPercent?.message}>
         <input type="number" step="1" min="1" {...register('marginBalanceThresholdPercent')} />
+      </Field>
+      <Field label="ADL 减仓阈值" error={errors.adlThresholdPercent?.message}>
+        <input type="number" step="1" min="1" {...register('adlThresholdPercent')} />
+      </Field>
+      <Field label="ADL 检测窗口" error={errors.adlWindowSeconds?.message}>
+        <input type="number" step="1" min="1" {...register('adlWindowSeconds', { valueAsNumber: true })} />
+      </Field>
+      <Field label="ADL 采样间隔" error={errors.adlSampleIntervalSeconds?.message}>
+        <input type="number" step="1" min="1" {...register('adlSampleIntervalSeconds', { valueAsNumber: true })} />
+      </Field>
+      <Field label="ADL 开始时间" error={errors.adlStartTime?.message}>
+        <input type="time" {...register('adlStartTime')} />
+      </Field>
+      <Field label="ADL 结束时间" error={errors.adlEndTime?.message}>
+        <input type="time" {...register('adlEndTime')} />
       </Field>
       <Field label="监控频率" error={errors.checkIntervalSeconds?.message}>
         <input type="number" step="1" min="1" {...register('checkIntervalSeconds', { valueAsNumber: true })} />

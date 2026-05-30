@@ -5,11 +5,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from profits_check_backend.models import Channel, LiquidationMarginBalance, LiquidationPosition
+from profits_check_backend.models import (
+    AdlEvent,
+    AdlPositionSample,
+    Channel,
+    LiquidationMarginBalance,
+    LiquidationPosition,
+)
 from profits_check_backend.providers.base import ContractMarginBalanceRisk, ContractPositionRisk
 from profits_check_backend.providers.http import provider_http_client
 from profits_check_backend.security import SecretCipher
@@ -23,6 +30,7 @@ from profits_check_backend.services.snapshots import quantize_decimal
 LIQUIDATION_MONITOR_SETTING_KEY = "liquidationMonitorConfig"
 RECOVERY_BUFFER_PERCENT = Decimal("1")
 MONITORED_PROVIDERS = {"binance", "gate", "okx", "bitget", "bybit", "aster"}
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(slots=True)
@@ -33,6 +41,12 @@ class LiquidationMonitorConfig:
     position_threshold_percent: Decimal = Decimal("5")
     margin_balance_monitor_enabled: bool = False
     margin_balance_threshold_percent: Decimal = Decimal("70")
+    adl_monitor_enabled: bool = False
+    adl_threshold_percent: Decimal = Decimal("40")
+    adl_window_seconds: int = 60
+    adl_sample_interval_seconds: int = 30
+    adl_start_time: str = "00:00"
+    adl_end_time: str = "23:59"
     check_interval_seconds: int = 60
     alert_interval_seconds: int = 900
     miao_code: str = ""
@@ -51,6 +65,36 @@ class AlertSendResult:
     error: str | None = None
 
 
+def parse_adl_monitor_time(value: str) -> tuple[int, int]:
+    try:
+        hour_text, minute_text = value.strip().split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except ValueError as exc:
+        raise ValueError("ADL monitor time must use HH:MM in UTC+8") from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("ADL monitor time must use HH:MM in UTC+8")
+    if f"{hour:02d}:{minute:02d}" != value.strip():
+        raise ValueError("ADL monitor time must use HH:MM in UTC+8")
+    return hour, minute
+
+
+def adl_monitor_active_at(config: LiquidationMonitorConfig, now: datetime) -> bool:
+    if not config.adl_monitor_enabled:
+        return False
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    local_time = now.astimezone(SHANGHAI_TZ).time()
+    start_hour, start_minute = parse_adl_monitor_time(config.adl_start_time)
+    end_hour, end_minute = parse_adl_monitor_time(config.adl_end_time)
+    start_minutes = start_hour * 60 + start_minute
+    end_minutes = end_hour * 60 + end_minute
+    current_minutes = local_time.hour * 60 + local_time.minute
+    if start_minutes <= end_minutes:
+        return start_minutes <= current_minutes <= end_minutes
+    return current_minutes >= start_minutes or current_minutes <= end_minutes
+
+
 def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, object]:
     return {
         "monitorEnabled": config.monitor_enabled,
@@ -60,6 +104,12 @@ def liquidation_config_payload(config: LiquidationMonitorConfig) -> dict[str, ob
         "positionThresholdPercent": quantize_decimal(config.position_threshold_percent),
         "marginBalanceMonitorEnabled": config.margin_balance_monitor_enabled,
         "marginBalanceThresholdPercent": quantize_decimal(config.margin_balance_threshold_percent),
+        "adlMonitorEnabled": config.adl_monitor_enabled,
+        "adlThresholdPercent": quantize_decimal(config.adl_threshold_percent),
+        "adlWindowSeconds": config.adl_window_seconds,
+        "adlSampleIntervalSeconds": config.adl_sample_interval_seconds,
+        "adlStartTime": config.adl_start_time,
+        "adlEndTime": config.adl_end_time,
         "checkIntervalSeconds": config.check_interval_seconds,
         "alertIntervalSeconds": config.alert_interval_seconds,
         "miaoCodeConfigured": bool(config.miao_code),
@@ -99,6 +149,12 @@ def load_liquidation_monitor_config(
         margin_balance_threshold_percent=Decimal(
             str(payload.get("marginBalanceThresholdPercent", "70"))
         ),
+        adl_monitor_enabled=bool(payload.get("adlMonitorEnabled", False)),
+        adl_threshold_percent=Decimal(str(payload.get("adlThresholdPercent", "40"))),
+        adl_window_seconds=int(payload.get("adlWindowSeconds", 60)),
+        adl_sample_interval_seconds=int(payload.get("adlSampleIntervalSeconds", 30)),
+        adl_start_time=str(payload.get("adlStartTime", "00:00")),
+        adl_end_time=str(payload.get("adlEndTime", "23:59")),
         check_interval_seconds=int(payload.get("checkIntervalSeconds", 60)),
         alert_interval_seconds=int(payload.get("alertIntervalSeconds", 900)),
         miao_code=miao_code,
@@ -116,6 +172,12 @@ def save_liquidation_monitor_config(
     position_threshold_percent: Decimal | None = None,
     margin_balance_monitor_enabled: bool | None = None,
     margin_balance_threshold_percent: Decimal | None = None,
+    adl_monitor_enabled: bool | None = None,
+    adl_threshold_percent: Decimal | None = None,
+    adl_window_seconds: int | None = None,
+    adl_sample_interval_seconds: int | None = None,
+    adl_start_time: str | None = None,
+    adl_end_time: str | None = None,
     check_interval_seconds: int,
     alert_interval_seconds: int,
     miao_code: str | None,
@@ -129,17 +191,36 @@ def save_liquidation_monitor_config(
         position_threshold_percent = threshold_percent or Decimal("5")
     if margin_balance_threshold_percent is None:
         margin_balance_threshold_percent = Decimal("70")
+    if adl_monitor_enabled is None:
+        adl_monitor_enabled = False
+    if adl_threshold_percent is None:
+        adl_threshold_percent = Decimal("40")
+    if adl_window_seconds is None:
+        adl_window_seconds = 60
+    if adl_sample_interval_seconds is None:
+        adl_sample_interval_seconds = 30
+    if adl_start_time is None:
+        adl_start_time = "00:00"
+    if adl_end_time is None:
+        adl_end_time = "23:59"
     if check_interval_seconds <= 0:
         raise ValueError("Liquidation monitor frequency must be greater than 0")
     if alert_interval_seconds <= 0:
         raise ValueError("Liquidation alert frequency must be greater than 0")
     if position_threshold_percent <= 0 or margin_balance_threshold_percent <= 0:
         raise ValueError("Liquidation threshold must be greater than 0")
+    if adl_threshold_percent <= 0:
+        raise ValueError("ADL threshold must be greater than 0")
+    if adl_window_seconds <= 0 or adl_sample_interval_seconds <= 0:
+        raise ValueError("ADL monitor frequency must be greater than 0")
     if (
         position_threshold_percent != position_threshold_percent.to_integral_value()
         or margin_balance_threshold_percent != margin_balance_threshold_percent.to_integral_value()
+        or adl_threshold_percent != adl_threshold_percent.to_integral_value()
     ):
         raise ValueError("Liquidation threshold must be an integer")
+    parse_adl_monitor_time(adl_start_time)
+    parse_adl_monitor_time(adl_end_time)
     if bark_push_url is not None:
         bark_push_url = bark_push_url.strip()
         if bark_push_url and not bark_push_url.startswith(("http://", "https://")):
@@ -155,6 +236,12 @@ def save_liquidation_monitor_config(
             "positionThresholdPercent": str(position_threshold_percent),
             "marginBalanceMonitorEnabled": margin_balance_monitor_enabled,
             "marginBalanceThresholdPercent": str(margin_balance_threshold_percent),
+            "adlMonitorEnabled": adl_monitor_enabled,
+            "adlThresholdPercent": str(adl_threshold_percent),
+            "adlWindowSeconds": adl_window_seconds,
+            "adlSampleIntervalSeconds": adl_sample_interval_seconds,
+            "adlStartTime": adl_start_time,
+            "adlEndTime": adl_end_time,
             "thresholdPercent": str(position_threshold_percent),
             "checkIntervalSeconds": check_interval_seconds,
             "alertIntervalSeconds": alert_interval_seconds,
@@ -187,8 +274,10 @@ async def run_liquidation_monitor(
     now = now or datetime.now(UTC)
     positions: list[LiquidationPosition] = []
     margin_balances: list[LiquidationMarginBalance] = []
+    adl_events: list[AdlEvent] = []
     alert_count = 0
     failure_count = 0
+    adl_active = adl_monitor_active_at(config, now)
 
     existing = {
         (item.channel_id, item.symbol, item.side): item
@@ -217,6 +306,33 @@ async def run_liquidation_monitor(
             failure_count += 1
             continue
 
+        if adl_active:
+            detected_adl_events = await detect_adl_events(
+                session=session,
+                channel=channel,
+                provider_positions=provider_positions,
+                config=config,
+                now=now,
+            )
+            for adl_event in detected_adl_events:
+                if (
+                    config.alert_enabled
+                    and (config.miao_code or config.bark_push_url)
+                    and should_send_adl_alert(adl_event, now, config.alert_interval_seconds)
+                ):
+                    alert_result = await send_liquidation_alert(
+                        miao_code=config.miao_code,
+                        bark_push_url=config.bark_push_url,
+                        title=adl_alert_title(adl_event),
+                        text=adl_alert_text(adl_event),
+                    )
+                    adl_event.last_alert_status = alert_result.status
+                    adl_event.last_alert_error = alert_result.error
+                    adl_event.last_alert_at = now if alert_result.attempted else None
+                    if alert_result.sent:
+                        alert_count += 1
+            adl_events.extend(detected_adl_events)
+
         collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
         try:
             provider_margin_balance = (
@@ -238,7 +354,8 @@ async def run_liquidation_monitor(
             )
             seen_keys.add((model.channel_id, model.symbol, model.side))
             if (
-                config.alert_enabled
+                config.position_monitor_enabled
+                and config.alert_enabled
                 and (config.miao_code or config.bark_push_url)
                 and should_send_alert(model, now, config.alert_interval_seconds)
             ):
@@ -308,9 +425,13 @@ async def run_liquidation_monitor(
             session.delete(margin_balance_item)
 
     session.commit()
+    prune_adl_samples(session, now, max(config.adl_window_seconds * 2, 300))
+    session.commit()
     positions.sort(
         key=lambda item: (item.distance_percent is None, item.distance_percent or Decimal("999999"))
     )
+    if not adl_events:
+        adl_events = list(session.scalars(select(AdlEvent).order_by(AdlEvent.detected_at.desc())))
     return {
         "status": "success" if failure_count == 0 else "partial",
         "alertCount": alert_count,
@@ -321,7 +442,142 @@ async def run_liquidation_monitor(
             liquidation_margin_balance_payload(margin_balance)
             for margin_balance in sorted(margin_balances, key=lambda item: item.id or 0)
         ],
+        "adlEvents": [adl_event_payload(event) for event in adl_events],
     }
+
+
+async def detect_adl_events(
+    *,
+    session: Session,
+    channel: Channel,
+    provider_positions: list[ContractPositionRisk],
+    config: LiquidationMonitorConfig,
+    now: datetime,
+) -> list[AdlEvent]:
+    current_by_key = {
+        (channel.id, position.symbol, position.side): abs(position.quantity)
+        for position in provider_positions
+    }
+    recent_samples = list(
+        session.scalars(
+            select(AdlPositionSample).where(
+                AdlPositionSample.channel_id == channel.id,
+                AdlPositionSample.sampled_at >= now - timedelta(seconds=config.adl_window_seconds),
+                AdlPositionSample.sampled_at < now,
+            )
+        )
+    )
+    keys = set(current_by_key) | {
+        (sample.channel_id, sample.symbol, sample.side) for sample in recent_samples
+    }
+    metadata_by_key = {
+        (channel.id, position.symbol, position.side): (position.symbol, position.side)
+        for position in provider_positions
+    }
+    for sample in recent_samples:
+        metadata_by_key.setdefault(
+            (sample.channel_id, sample.symbol, sample.side),
+            (sample.symbol, sample.side),
+        )
+
+    events: list[AdlEvent] = []
+    for key in sorted(keys):
+        baseline = max(
+            (
+                sample.quantity_abs
+                for sample in recent_samples
+                if (sample.channel_id, sample.symbol, sample.side) == key
+            ),
+            default=Decimal("0"),
+        )
+        current_quantity = current_by_key.get(key, Decimal("0"))
+        if baseline <= 0:
+            continue
+        drop_percent = (baseline - current_quantity) / baseline * Decimal("100")
+        if drop_percent < config.adl_threshold_percent:
+            continue
+        if has_recent_adl_event(
+            session=session,
+            key=key,
+            now=now,
+            alert_interval_seconds=config.alert_interval_seconds,
+        ):
+            continue
+        symbol, side = metadata_by_key[key]
+        event = AdlEvent(
+            channel_id=channel.id,
+            provider=channel.provider,
+            channel_name=channel.name,
+            symbol=symbol,
+            side=side,
+            previous_quantity_abs=baseline,
+            current_quantity_abs=current_quantity,
+            drop_percent=drop_percent.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
+            threshold_percent=config.adl_threshold_percent,
+            window_seconds=config.adl_window_seconds,
+            status="suspected",
+            detected_at=now,
+            created_at=now,
+        )
+        session.add(event)
+        events.append(event)
+
+    for key, quantity_abs in current_by_key.items():
+        _, symbol, side = key
+        session.add(
+            AdlPositionSample(
+                channel_id=channel.id,
+                provider=channel.provider,
+                channel_name=channel.name,
+                symbol=symbol,
+                side=side,
+                quantity_abs=quantity_abs,
+                sampled_at=now,
+            )
+        )
+    for key in keys - set(current_by_key):
+        _, symbol, side = key
+        session.add(
+            AdlPositionSample(
+                channel_id=channel.id,
+                provider=channel.provider,
+                channel_name=channel.name,
+                symbol=symbol,
+                side=side,
+                quantity_abs=Decimal("0"),
+                sampled_at=now,
+            )
+        )
+    return events
+
+
+def has_recent_adl_event(
+    *,
+    session: Session,
+    key: tuple[int, str, str],
+    now: datetime,
+    alert_interval_seconds: int,
+) -> bool:
+    channel_id, symbol, side = key
+    return (
+        session.scalar(
+            select(AdlEvent.id).where(
+                AdlEvent.channel_id == channel_id,
+                AdlEvent.symbol == symbol,
+                AdlEvent.side == side,
+                AdlEvent.detected_at >= now - timedelta(seconds=alert_interval_seconds),
+            )
+        )
+        is not None
+    )
+
+
+def prune_adl_samples(session: Session, now: datetime, retention_seconds: int) -> None:
+    session.execute(
+        delete(AdlPositionSample).where(
+            AdlPositionSample.sampled_at < now - timedelta(seconds=retention_seconds)
+        )
+    )
 
 
 def upsert_liquidation_position(
@@ -447,6 +703,15 @@ def should_send_margin_balance_alert(
     )
 
 
+def should_send_adl_alert(adl_event: AdlEvent, now: datetime, alert_interval_seconds: int) -> bool:
+    return should_send_warning_alert(
+        status="warning",
+        last_alert_at=adl_event.last_alert_at,
+        now=now,
+        alert_interval_seconds=alert_interval_seconds,
+    )
+
+
 def should_send_warning_alert(
     *,
     status: str,
@@ -487,6 +752,20 @@ def margin_balance_alert_text(channel: Channel, risk: ContractMarginBalanceRisk)
         else "N/A"
     )
     return f"{channel.name}\nRisk ratio: {rendered_percent}%"
+
+
+def adl_alert_title(event: AdlEvent) -> str:
+    return f"{event.channel_name} {event.symbol} {event.side} suspected ADL"
+
+
+def adl_alert_text(event: AdlEvent) -> str:
+    rendered_drop = event.drop_percent.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return (
+        f"{event.channel_name} {event.symbol} {event.side}\n"
+        f"Suspected ADL: position size dropped {rendered_drop}%\n"
+        f"Previous quantity: {event.previous_quantity_abs}\n"
+        f"Current quantity: {event.current_quantity_abs}"
+    )
 
 
 async def send_miaotixing_alert(miao_code: str, text: str) -> dict[str, str]:
@@ -604,18 +883,43 @@ def liquidation_margin_balance_payload(
     }
 
 
+def adl_event_payload(event: AdlEvent) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "channelId": event.channel_id,
+        "provider": event.provider,
+        "channelName": event.channel_name,
+        "symbol": event.symbol,
+        "side": event.side,
+        "previousQuantity": quantize_decimal(event.previous_quantity_abs),
+        "currentQuantity": quantize_decimal(event.current_quantity_abs),
+        "dropPercent": quantize_decimal(event.drop_percent),
+        "thresholdPercent": quantize_decimal(event.threshold_percent),
+        "windowSeconds": event.window_seconds,
+        "status": event.status,
+        "lastAlertStatus": event.last_alert_status,
+        "lastAlertError": event.last_alert_error,
+        "lastAlertAt": event.last_alert_at.replace(tzinfo=UTC).isoformat()
+        if event.last_alert_at
+        else None,
+        "detectedAt": event.detected_at.replace(tzinfo=UTC).isoformat(),
+    }
+
+
 def get_liquidation_monitor_payload(session: Session, cipher: SecretCipher) -> dict[str, object]:
     config = load_liquidation_monitor_config(session, cipher)
     positions = list(session.scalars(select(LiquidationPosition).order_by(LiquidationPosition.id)))
     margin_balances = list(
         session.scalars(select(LiquidationMarginBalance).order_by(LiquidationMarginBalance.id))
     )
+    adl_events = list(session.scalars(select(AdlEvent).order_by(AdlEvent.detected_at.desc())))
     return {
         "config": liquidation_config_payload(config),
         "positions": [liquidation_position_payload(position) for position in positions],
         "marginBalances": [
             liquidation_margin_balance_payload(margin_balance) for margin_balance in margin_balances
         ],
+        "adlEvents": [adl_event_payload(event) for event in adl_events],
     }
 
 

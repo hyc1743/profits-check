@@ -10,6 +10,7 @@ Profits Check 是一个加密资产看板，用于连接交易所账户和链上
 - **资产分布**：按渠道和账户类型展示资产占比。
 - **收益日历**：按日、月、年查看资产变化。
 - **定时快照**：按配置时间自动保存快照。
+- **仓位风险监控**：监控合约爆仓风险、保证金余额风险，并支持按 UTC+8 每日时段检测疑似 ADL。
 - **密钥加密**：交易所 API 密钥使用 Fernet 对称加密后存储。
 
 ## 技术栈
@@ -174,7 +175,7 @@ backend/src/profits_check_backend/
 ├── main.py              # FastAPI 应用工厂和 API 路由
 ├── config.py            # pydantic-settings 配置
 ├── db.py                # SQLAlchemy engine/session
-├── models.py            # ORM 模型
+    ├── models.py            # ORM 模型
 ├── security.py          # Fernet SecretCipher
 ├── domain/models.py     # ProviderType 枚举
 ├── providers/           # 交易所和链上适配器
@@ -184,6 +185,7 @@ backend/src/profits_check_backend/
 │   └── onchain.py       # EVM 链上钱包总估值适配
 └── services/
     ├── channels.py      # 渠道 CRUD 和配置加密
+    ├── liquidation_monitor.py # 爆仓、保证金余额和 ADL 风险监控
     └── snapshots.py     # 快照执行和资产聚合
 
 frontend/src/

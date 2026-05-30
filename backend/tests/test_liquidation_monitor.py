@@ -17,6 +17,8 @@ def position(
     provider: str = "binance",
     channel_name: str = "Binance",
     symbol: str = "BTCUSDT",
+    side: str = "LONG",
+    quantity: str = "0.5",
     mark_price: str = "58100",
     liquidation_price: str = "58000",
 ) -> ContractPositionRisk:
@@ -24,8 +26,8 @@ def position(
         provider=provider,
         channel_name=channel_name,
         symbol=symbol,
-        side="LONG",
-        quantity=Decimal("0.5"),
+        side=side,
+        quantity=Decimal(quantity),
         entry_price=Decimal("60000"),
         mark_price=Decimal(mark_price),
         liquidation_price=Decimal(liquidation_price),
@@ -185,6 +187,71 @@ def test_liquidation_monitor_config_round_trips_independent_risk_controls(client
     assert payload["config"]["marginBalanceMonitorEnabled"] is True
     assert payload["config"]["marginBalanceThresholdPercent"] == "75.00000000"
     assert payload["config"]["thresholdPercent"] == "2.00000000"
+
+
+def test_liquidation_monitor_config_round_trips_adl_controls(client) -> None:
+    initial = client.get("/api/liquidation-monitor")
+
+    assert initial.status_code == 200
+    assert initial.json()["config"]["adlMonitorEnabled"] is False
+    assert initial.json()["config"]["adlThresholdPercent"] == "40.00000000"
+    assert initial.json()["config"]["adlWindowSeconds"] == 60
+    assert initial.json()["config"]["adlSampleIntervalSeconds"] == 30
+    assert initial.json()["config"]["adlStartTime"] == "00:00"
+    assert initial.json()["config"]["adlEndTime"] == "23:59"
+
+    response = client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "adlMonitorEnabled": True,
+            "adlThresholdPercent": "40",
+            "adlWindowSeconds": 60,
+            "adlSampleIntervalSeconds": 30,
+            "adlStartTime": "21:00",
+            "adlEndTime": "02:00",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["monitorEnabled"] is True
+    assert payload["config"]["adlMonitorEnabled"] is True
+    assert payload["config"]["adlThresholdPercent"] == "40.00000000"
+    assert payload["config"]["adlWindowSeconds"] == 60
+    assert payload["config"]["adlSampleIntervalSeconds"] == 30
+    assert payload["config"]["adlStartTime"] == "21:00"
+    assert payload["config"]["adlEndTime"] == "02:00"
+
+
+def test_liquidation_monitor_rejects_invalid_adl_time(client) -> None:
+    response = client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "adlMonitorEnabled": True,
+            "adlThresholdPercent": "40",
+            "adlWindowSeconds": 60,
+            "adlSampleIntervalSeconds": 30,
+            "adlStartTime": "24:00",
+            "adlEndTime": "02:00",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "ADL monitor time must use HH:MM in UTC+8"
 
 
 def test_liquidation_monitor_rejects_fractional_threshold(client) -> None:
@@ -722,6 +789,208 @@ def test_margin_balance_alert_uses_configured_alert_interval(client, httpx_mock)
     assert first["alertCount"] == 1
     assert second["alertCount"] == 0
     assert third["alertCount"] == 1
+
+
+def test_adl_monitor_detects_short_window_absolute_position_drop(client, httpx_mock) -> None:
+    samples = [
+        [position(quantity="1.0")],
+        [position(quantity="0.59")],
+    ]
+
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return samples.pop(0)
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "adlMonitorEnabled": True,
+            "adlThresholdPercent": "40",
+            "adlWindowSeconds": 60,
+            "adlSampleIntervalSeconds": 30,
+            "adlStartTime": "15:00",
+            "adlEndTime": "17:00",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+            "barkPushUrl": "https://bark.example.com/device-key",
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://bark.example.com/device-key",
+        json={"code": 200, "message": "success"},
+    )
+    now = datetime(2026, 5, 12, 8, 0, tzinfo=UTC)
+
+    def run_at(timestamp):
+        with client.app.state.session_factory() as session:
+            channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=client.app.state.cipher,
+                    provider_builder=client.app.state.provider_builder,
+                    now=timestamp,
+                )
+            )
+
+    first = run_at(now)
+    second = run_at(now + timedelta(seconds=30))
+
+    assert first["adlEvents"] == []
+    assert second["alertCount"] == 1
+    assert second["adlEvents"][0]["channelName"] == "Binance"
+    assert second["adlEvents"][0]["symbol"] == "BTCUSDT"
+    assert second["adlEvents"][0]["side"] == "LONG"
+    assert second["adlEvents"][0]["previousQuantity"] == "1.00000000"
+    assert second["adlEvents"][0]["currentQuantity"] == "0.59000000"
+    assert second["adlEvents"][0]["dropPercent"] == "41.00000000"
+    assert second["adlEvents"][0]["lastAlertStatus"] == "sent"
+    request = httpx_mock.get_request(url="https://bark.example.com/device-key")
+    assert request is not None
+    bark_payload = json.loads(request.read().decode())
+    assert bark_payload["title"] == "Binance BTCUSDT LONG suspected ADL"
+
+
+def test_adl_monitor_uses_absolute_quantity_and_missing_position_as_zero(client) -> None:
+    samples = [
+        [position(symbol="ETHUSDT", side="SHORT", quantity="-2.0")],
+        [],
+    ]
+
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return samples.pop(0)
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "adlMonitorEnabled": True,
+            "adlThresholdPercent": "40",
+            "adlWindowSeconds": 60,
+            "adlSampleIntervalSeconds": 30,
+            "adlStartTime": "15:00",
+            "adlEndTime": "17:00",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+        },
+    )
+    now = datetime(2026, 5, 12, 8, 0, tzinfo=UTC)
+
+    def run_at(timestamp):
+        with client.app.state.session_factory() as session:
+            channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=client.app.state.cipher,
+                    provider_builder=client.app.state.provider_builder,
+                    now=timestamp,
+                )
+            )
+
+    run_at(now)
+    second = run_at(now + timedelta(seconds=30))
+
+    assert second["adlEvents"][0]["symbol"] == "ETHUSDT"
+    assert second["adlEvents"][0]["side"] == "SHORT"
+    assert second["adlEvents"][0]["previousQuantity"] == "2.00000000"
+    assert second["adlEvents"][0]["currentQuantity"] == "0E-8"
+    assert second["adlEvents"][0]["dropPercent"] == "100.00000000"
+
+
+def test_adl_monitor_skips_detection_outside_utc8_daily_window(client) -> None:
+    samples = [
+        [position(quantity="1.0")],
+        [position(quantity="0.1")],
+    ]
+
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return samples.pop(0)
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": False,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "adlMonitorEnabled": True,
+            "adlThresholdPercent": "40",
+            "adlWindowSeconds": 60,
+            "adlSampleIntervalSeconds": 30,
+            "adlStartTime": "21:00",
+            "adlEndTime": "02:00",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 120,
+        },
+    )
+    now = datetime(2026, 5, 12, 8, 0, tzinfo=UTC)
+
+    def run_at(timestamp):
+        with client.app.state.session_factory() as session:
+            channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+            return asyncio.run(
+                run_liquidation_monitor(
+                    session=session,
+                    channels=channels,
+                    cipher=client.app.state.cipher,
+                    provider_builder=client.app.state.provider_builder,
+                    now=timestamp,
+                )
+            )
+
+    run_at(now)
+    second = run_at(now + timedelta(seconds=30))
+
+    assert second["adlEvents"] == []
 
 
 def test_liquidation_monitor_test_alert_uses_configured_miao_code(client, httpx_mock) -> None:

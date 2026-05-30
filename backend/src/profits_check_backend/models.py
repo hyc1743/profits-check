@@ -138,6 +138,41 @@ class LiquidationMarginBalance(Base):
     )
 
 
+class AdlPositionSample(Base):
+    __tablename__ = "adl_position_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    channel_name: Mapped[str] = mapped_column(String(120))
+    symbol: Mapped[str] = mapped_column(String(80))
+    side: Mapped[str] = mapped_column(String(32))
+    quantity_abs: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    sampled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AdlEvent(Base):
+    __tablename__ = "adl_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    channel_name: Mapped[str] = mapped_column(String(120))
+    symbol: Mapped[str] = mapped_column(String(80))
+    side: Mapped[str] = mapped_column(String(32))
+    previous_quantity_abs: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    current_quantity_abs: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    drop_percent: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    threshold_percent: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("40"))
+    window_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    status: Mapped[str] = mapped_column(String(32), default="suspected")
+    last_alert_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_alert_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_alert_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AuthSession(Base):
     __tablename__ = "auth_sessions"
 

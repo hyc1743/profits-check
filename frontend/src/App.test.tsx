@@ -103,6 +103,12 @@ const liquidationMonitorPayload = {
     positionThresholdPercent: '5.00000000',
     marginBalanceMonitorEnabled: false,
     marginBalanceThresholdPercent: '70.00000000',
+    adlMonitorEnabled: false,
+    adlThresholdPercent: '40.00000000',
+    adlWindowSeconds: 60,
+    adlSampleIntervalSeconds: 30,
+    adlStartTime: '00:00',
+    adlEndTime: '23:59',
     checkIntervalSeconds: 60,
     alertIntervalSeconds: 900,
     miaoCodeConfigured: false,
@@ -147,6 +153,26 @@ const liquidationMonitorPayload = {
       lastAlertStatus: null,
       lastAlertError: null,
       lastAlertAt: null,
+    },
+  ],
+  adlEvents: [
+    {
+      id: 1,
+      channelId: 1,
+      provider: 'binance',
+      channelName: '主账户',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      previousQuantity: '1.00000000',
+      currentQuantity: '0.59000000',
+      dropPercent: '41.00000000',
+      thresholdPercent: '40.00000000',
+      windowSeconds: 60,
+      status: 'suspected',
+      lastAlertStatus: 'sent',
+      lastAlertError: null,
+      lastAlertAt: '2026-05-12T08:00:30+00:00',
+      detectedAt: '2026-05-12T08:00:30+00:00',
     },
   ],
 }
@@ -388,6 +414,24 @@ test('switches liquidation risk panel to margin balance risk by channel', async 
   expect(screen.getByText('650.00 USD')).toBeInTheDocument()
 })
 
+test('switches liquidation risk panel to suspected ADL events', async () => {
+  installHandlers()
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect(await screen.findByRole('button', { name: 'ADL 检测' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'ADL 检测' }))
+
+  expect(screen.getByLabelText('ADL 检测事件')).toBeInTheDocument()
+  expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
+  expect(screen.getByText('LONG · 疑似 ADL')).toBeInTheDocument()
+  expect(screen.getByText('41%')).toBeInTheDocument()
+  expect(screen.getByText('1.00000000')).toBeInTheDocument()
+  expect(screen.getByText('0.59000000')).toBeInTheDocument()
+  expect(screen.getByText('2026-05-12 16:00:30')).toBeInTheDocument()
+})
+
 test('shows infinity and no-risk copy when liquidation price is unavailable', async () => {
   installHandlers()
   const unavailableLiquidationMonitorPayload = {
@@ -475,6 +519,12 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
         positionThresholdPercent: '2',
         marginBalanceMonitorEnabled: true,
         marginBalanceThresholdPercent: '75',
+        adlMonitorEnabled: false,
+        adlThresholdPercent: '40',
+        adlWindowSeconds: 60,
+        adlSampleIntervalSeconds: 30,
+        adlStartTime: '00:00',
+        adlEndTime: '23:59',
         checkIntervalSeconds: 45,
         alertIntervalSeconds: 120,
         miaoCode: 'miao-123',
@@ -490,6 +540,52 @@ test('saves liquidation monitor switches frequency threshold and test alert', as
   testAlertCalled = false
   await user.click(screen.getByRole('button', { name: '测试 Bark' }))
   await waitFor(() => expect(testAlertCalled).toBe(true))
+})
+
+test('saves liquidation monitor ADL controls', async () => {
+  installHandlers()
+  const monitorUpdates: Array<Record<string, unknown>> = []
+  server.use(
+    http.put('/api/liquidation-monitor', async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>
+      monitorUpdates.push(body)
+      return HttpResponse.json({
+        ...liquidationMonitorPayload,
+        config: {
+          ...liquidationMonitorPayload.config,
+          ...body,
+        },
+      })
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  await user.click(screen.getByLabelText('开启 ADL 检测'))
+  await user.clear(screen.getByLabelText('ADL 减仓阈值'))
+  await user.type(screen.getByLabelText('ADL 减仓阈值'), '40')
+  await user.clear(screen.getByLabelText('ADL 检测窗口'))
+  await user.type(screen.getByLabelText('ADL 检测窗口'), '60')
+  await user.clear(screen.getByLabelText('ADL 采样间隔'))
+  await user.type(screen.getByLabelText('ADL 采样间隔'), '30')
+  await user.clear(screen.getByLabelText('ADL 开始时间'))
+  await user.type(screen.getByLabelText('ADL 开始时间'), '21:00')
+  await user.clear(screen.getByLabelText('ADL 结束时间'))
+  await user.type(screen.getByLabelText('ADL 结束时间'), '02:00')
+  await user.click(screen.getByRole('button', { name: '保存爆仓监控' }))
+
+  await waitFor(() => expect(monitorUpdates).toHaveLength(1))
+  expect(monitorUpdates[0]).toMatchObject({
+    monitorEnabled: true,
+    adlMonitorEnabled: true,
+    adlThresholdPercent: '40',
+    adlWindowSeconds: 60,
+    adlSampleIntervalSeconds: 30,
+    adlStartTime: '21:00',
+    adlEndTime: '02:00',
+  })
 })
 
 test('shows configured alert channel values and can clear them', async () => {

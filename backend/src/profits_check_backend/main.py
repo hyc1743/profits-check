@@ -208,6 +208,16 @@ class LiquidationMonitorPayload(BaseModel):
     margin_balance_threshold_percent: Decimal | None = Field(
         default=None, alias="marginBalanceThresholdPercent", gt=0
     )
+    adl_monitor_enabled: bool | None = Field(default=None, alias="adlMonitorEnabled")
+    adl_threshold_percent: Decimal | None = Field(
+        default=None, alias="adlThresholdPercent", gt=0
+    )
+    adl_window_seconds: int | None = Field(default=None, alias="adlWindowSeconds", gt=0)
+    adl_sample_interval_seconds: int | None = Field(
+        default=None, alias="adlSampleIntervalSeconds", gt=0
+    )
+    adl_start_time: str | None = Field(default=None, alias="adlStartTime", max_length=5)
+    adl_end_time: str | None = Field(default=None, alias="adlEndTime", max_length=5)
     check_interval_seconds: int = Field(alias="checkIntervalSeconds", gt=0)
     alert_interval_seconds: int = Field(alias="alertIntervalSeconds", gt=0)
     miao_code: str | None = Field(default=None, alias="miaoCode", max_length=256)
@@ -224,11 +234,16 @@ class LiquidationMonitorPayload(BaseModel):
         return bool(self.margin_balance_monitor_enabled)
 
     @property
+    def resolved_adl_monitor_enabled(self) -> bool:
+        return bool(self.adl_monitor_enabled)
+
+    @property
     def resolved_monitor_enabled(self) -> bool:
         if self.monitor_enabled is not None and self.position_monitor_enabled is None:
             return self.monitor_enabled
         return (
             self.resolved_position_monitor_enabled or self.resolved_margin_balance_monitor_enabled
+            or self.resolved_adl_monitor_enabled
         )
 
 
@@ -362,9 +377,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 scheduler.remove_job(job.id)
         if not config.monitor_enabled:
             return
+        interval_seconds = config.check_interval_seconds
+        if config.adl_monitor_enabled:
+            interval_seconds = min(interval_seconds, config.adl_sample_interval_seconds)
         scheduler.add_job(
             run_scheduled_liquidation_monitor,
-            IntervalTrigger(seconds=config.check_interval_seconds, timezone=scheduler_timezone),
+            IntervalTrigger(seconds=interval_seconds, timezone=scheduler_timezone),
             id="liquidation-monitor",
             replace_existing=True,
             max_instances=1,
@@ -623,6 +641,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 position_threshold_percent=payload.position_threshold_percent,
                 margin_balance_monitor_enabled=payload.resolved_margin_balance_monitor_enabled,
                 margin_balance_threshold_percent=payload.margin_balance_threshold_percent,
+                adl_monitor_enabled=payload.resolved_adl_monitor_enabled,
+                adl_threshold_percent=payload.adl_threshold_percent,
+                adl_window_seconds=payload.adl_window_seconds,
+                adl_sample_interval_seconds=payload.adl_sample_interval_seconds,
+                adl_start_time=payload.adl_start_time,
+                adl_end_time=payload.adl_end_time,
                 check_interval_seconds=payload.check_interval_seconds,
                 alert_interval_seconds=payload.alert_interval_seconds,
                 miao_code=payload.miao_code,

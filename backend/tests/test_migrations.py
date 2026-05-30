@@ -27,6 +27,8 @@ def test_alembic_upgrade_creates_expected_tables(tmp_path) -> None:
         "snapshots",
         "liquidation_positions",
         "liquidation_margin_balances",
+        "adl_position_samples",
+        "adl_events",
     } <= set(inspector.get_table_names())
 
 
@@ -107,7 +109,7 @@ def test_alembic_upgrade_adopts_existing_pre_alembic_database(tmp_path) -> None:
     assert "auth_sessions" in inspector.get_table_names()
     with engine.connect() as connection:
         assert connection.scalar(text("select count(*) from channels")) == 1
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0006"
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260530_0007"
 
 
 def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> None:
@@ -161,4 +163,4 @@ def test_alembic_upgrade_migrates_legacy_bsc_provider_to_onchain(tmp_path) -> No
         )
         assert public_config["walletAddresses"] == ["0x367c518a67289e9bf6a18e0016aaea526d769459"]
         assert public_config["chainIndexes"] == ["1", "56"]
-        assert connection.scalar(text("select version_num from alembic_version")) == "20260520_0006"
+        assert connection.scalar(text("select version_num from alembic_version")) == "20260530_0007"
