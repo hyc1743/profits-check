@@ -13,6 +13,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -138,7 +139,11 @@ class BinanceProvider(Provider):
         wallet_balance = Decimal(str(payload.get("totalWalletBalance", "0")))
         margin_balance = Decimal(str(payload.get("totalMarginBalance", "0")))
         unrealized_pnl = _optional_decimal(payload.get("totalUnrealizedProfit"))
-        if wallet_balance == 0 and margin_balance == 0 and (unrealized_pnl is None or unrealized_pnl == 0):
+        if (
+            wallet_balance == 0
+            and margin_balance == 0
+            and (unrealized_pnl is None or unrealized_pnl == 0)
+        ):
             return None
         return ContractMarginBalanceRisk(
             provider="binance",
@@ -149,6 +154,55 @@ class BinanceProvider(Provider):
             updated_at_ms=timestamp,
             raw_payload=cast(dict[str, object], payload),
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        futures_base_url = str(
+            self.config.get(
+                "futures_base_url", self.config.get("futuresBaseUrl", "https://fapi.binance.com")
+            )
+        ).rstrip("/")
+        api_key = str(
+            self.config.get(
+                "api_key",
+                self.config.get(
+                    "apiKey", self.secrets.get("api_key", self.secrets.get("apiKey", ""))
+                ),
+            )
+        )
+        api_secret = str(self.secrets.get("api_secret", self.secrets.get("apiSecret", "")))
+        if not api_key or not api_secret:
+            raise ProviderError("Binance API credentials are incomplete")
+
+        params = {
+            "incomeType": "FUNDING_FEE",
+            "startTime": start_time_ms,
+            "endTime": end_time_ms,
+            "limit": 1000,
+            "timestamp": int(self.now_factory()),
+        }
+        query = urlencode(params)
+        signature = self.signature_factory(query, api_secret)
+        url = f"{futures_base_url}/fapi/v1/income?{query}&signature={signature}"
+        async with provider_http_client() as client:
+            response = await client.get(url, headers={"X-MBX-APIKEY": api_key})
+            response.raise_for_status()
+            payload = response.json()
+
+        return [
+            FundingFeeRecord(
+                provider="binance",
+                channel_name=self.channel_name,
+                amount=Decimal(str(item.get("income", "0"))),
+                asset=str(item.get("asset", "USDT")).upper(),
+                timestamp_ms=int(str(item.get("time", "0"))),
+                symbol=str(item.get("symbol", "")) or None,
+                raw_payload=cast(dict[str, object], item),
+            )
+            for item in payload
+            if Decimal(str(item.get("income", "0"))) != 0
+        ]
 
     def _position_from_payload(self, item: dict[str, Any]) -> ContractPositionRisk:
         return ContractPositionRisk(
@@ -389,6 +443,10 @@ class BinanceProvider(Provider):
                     borrowed=Decimal("0"),
                     unrealized_pnl=Decimal("0"),
                     value_usd=total * price,
+                    inclusion_key=(
+                        f"channel:{channel_id}|provider:binance|scope:spot|asset:{item['asset']}"
+                    ),
+                    included_in_totals=True,
                     raw_payload={"balance": item},
                 )
             )

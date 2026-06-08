@@ -517,3 +517,149 @@ def test_binance_snapshot_run_ignores_unreadable_okx_dex_config(client) -> None:
 
     assert run_response.status_code == 200
     assert run_response.json()["totalValueUsd"] == "10500.00000000"
+
+
+def test_live_summary_and_future_snapshots_respect_portfolio_inclusion_rules(client) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    class StubProvider:
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=Decimal("2300"),
+                assets=[
+                    AssetBalance(
+                        asset_symbol="BTC",
+                        quantity=Decimal("0.02"),
+                        value_usd=Decimal("1200"),
+                        metadata={"source": "binance", "type": "spot"},
+                    ),
+                    AssetBalance(
+                        asset_symbol="ETH",
+                        quantity=Decimal("0.5"),
+                        value_usd=Decimal("800"),
+                        metadata={"source": "binance", "type": "spot"},
+                    ),
+                    AssetBalance(
+                        asset_symbol="USDT",
+                        quantity=-Decimal("300"),
+                        value_usd=-Decimal("300"),
+                        metadata={"source": "binance", "type": "loan_debt"},
+                    ),
+                    AssetBalance(
+                        asset_symbol="BTCUSDT",
+                        quantity=Decimal("1"),
+                        value_usd=Decimal("600"),
+                        metadata={
+                            "source": "binance",
+                            "type": "strategy_signal",
+                            "portfolioAccounting": "informational",
+                        },
+                    ),
+                ],
+            )
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance Main",
+            "publicConfig": {"accountType": "spot"},
+            "secretConfig": {"apiKey": "key-1", "apiSecret": "secret-1"},
+        },
+    )
+    assert channel_response.status_code == 201
+
+    initial_summary = client.get("/api/summary/live").json()
+    btc_item = next(
+        item for item in initial_summary["portfolioItems"] if item["assetSymbol"] == "BTC"
+    )
+    signal_item = next(
+        item
+        for item in initial_summary["portfolioItems"]
+        if item["accountScope"] == "strategy_signal"
+    )
+    assert initial_summary["totalValueUsd"] == "1700.00000000"
+    assert btc_item["includedInTotals"] is True
+    assert signal_item["includedInTotals"] is False
+
+    update_response = client.put(
+        "/api/portfolio-inclusion-rules",
+        json={
+            "items": [
+                {"key": btc_item["key"], "includedInTotals": False},
+                {"key": signal_item["key"], "includedInTotals": True},
+            ]
+        },
+    )
+    assert update_response.status_code == 200
+
+    updated_summary = client.get("/api/summary/live").json()
+    assert updated_summary["totalValueUsd"] == "1100.00000000"
+    assert [
+        (item["assetSymbol"], item["accountScope"], item["includedInTotals"])
+        for item in updated_summary["portfolioItems"]
+    ] == [
+        ("ETH", "spot", True),
+        ("BTCUSDT", "strategy_signal", True),
+        ("USDT", "loan_debt", True),
+        ("BTC", "spot", False),
+    ]
+
+    run_response = client.post("/api/snapshots/run")
+    assert run_response.status_code == 200
+    assert run_response.json()["totalValueUsd"] == "1100.00000000"
+
+    latest_summary = client.get("/api/summary/latest").json()
+    assert latest_summary["totalValueUsd"] == "1100.00000000"
+    assert (
+        next(item for item in latest_summary["portfolioItems"] if item["assetSymbol"] == "BTC")[
+            "includedInTotals"
+        ]
+        is False
+    )
+
+
+def test_clear_all_snapshots_preserves_channels(client) -> None:
+    from decimal import Decimal
+
+    from profits_check_backend.providers.base import AssetBalance, ProviderSnapshot
+
+    class StubProvider:
+        async def collect_snapshot(self) -> ProviderSnapshot:
+            return ProviderSnapshot(
+                total_value_usd=Decimal("100"),
+                assets=[
+                    AssetBalance(
+                        asset_symbol="USDT",
+                        quantity=Decimal("100"),
+                        value_usd=Decimal("100"),
+                    )
+                ],
+            )
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    create_response = client.post(
+        "/api/channels",
+        json={
+            "name": "Main Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "public-key", "apiSecret": "secret-key"},
+        },
+    )
+    assert create_response.status_code == 201
+    assert client.post("/api/snapshots/run").status_code == 200
+    assert client.get("/api/snapshots/series").json()
+
+    delete_response = client.delete("/api/snapshots")
+
+    assert delete_response.status_code == 204
+    assert client.get("/api/snapshots/series").json() == []
+    assert client.get("/api/snapshots").json() == []
+    assert len(client.get("/api/channels").json()) == 1

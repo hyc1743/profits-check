@@ -69,9 +69,24 @@ class SnapshotAsset(Base):
     borrowed: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
     unrealized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
     value_usd: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    inclusion_key: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    included_in_totals: Mapped[bool] = mapped_column(Boolean, default=True)
     raw_payload_json: Mapped[str] = mapped_column(Text, default="{}")
 
     snapshot: Mapped[Snapshot] = relationship(back_populates="assets")
+
+
+class PortfolioInclusionRule(Base):
+    __tablename__ = "portfolio_inclusion_rules"
+
+    key: Mapped[str] = mapped_column(String(260), primary_key=True)
+    included_in_totals: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
 
 
 class AppSetting(Base):

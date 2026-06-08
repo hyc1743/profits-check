@@ -11,8 +11,10 @@ import {
   api,
   type ChannelResponse,
   type CreateChannelPayload,
+  type FundingFeeSummaryResponse,
   type LiquidationMonitorResponse,
   type OnchainChainOption,
+  type PortfolioItem,
   type SnapshotItem,
   type ScheduleResponse,
   type UpdateLiquidationMonitorPayload,
@@ -119,6 +121,10 @@ function toMonthKey(value: string) {
 
 function getSnapshotMonths(snapshots: Array<{ createdAt: string }>) {
   return Array.from(new Set(snapshots.map((snapshot) => toMonthKey(snapshot.createdAt)))).sort()
+}
+
+function getCurrentMonthKey() {
+  return toMonthKey(new Date().toISOString())
 }
 
 function formatTrendAxisLabel(value: number) {
@@ -399,9 +405,11 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [showProfitCalendar, setShowProfitCalendar] = useState(false)
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
+  const [selectedFundingMonth, setSelectedFundingMonth] = useState(getCurrentMonthKey)
   const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
   const [isManualLiquidationRefreshPending, setIsManualLiquidationRefreshPending] = useState(false)
+  const [portfolioInclusionOverrides, setPortfolioInclusionOverrides] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode
@@ -420,6 +428,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const liquidationMonitorQuery = useQuery({
     queryKey: ['liquidation-monitor'],
     queryFn: api.getLiquidationMonitor,
+  })
+  const fundingFeesQuery = useQuery({
+    queryKey: ['funding-fees', selectedFundingMonth],
+    queryFn: () => api.getFundingFees(selectedFundingMonth),
   })
 
   const runSnapshotMutation = useMutation({
@@ -546,6 +558,20 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     onError: (error) => setNotice(error.message),
   })
 
+  const clearSnapshotsMutation = useMutation({
+    mutationFn: api.clearSnapshots,
+    onSuccess: async () => {
+      setPendingSnapshotDeleteId(null)
+      setNotice('资产快照已清除。')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['snapshots'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+      ])
+    },
+    onError: (error) => setNotice(error.message),
+  })
+
   const resetSystemMutation = useMutation({
     mutationFn: api.resetSystem,
     onSuccess: async () => {
@@ -573,7 +599,44 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     onError: (error) => setNotice(error.message),
   })
 
+  const updatePortfolioInclusionMutation = useMutation({
+    mutationFn: api.updatePortfolioInclusionRules,
+    onSuccess: async (_data, variables) => {
+      setPortfolioInclusionOverrides((current) => {
+        const next = { ...current }
+        variables.items.forEach((item) => {
+          delete next[item.key]
+        })
+        return next
+      })
+      setNotice('统计范围已更新。')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+      ])
+    },
+    onError: async (error, variables) => {
+      setPortfolioInclusionOverrides((current) => {
+        const next = { ...current }
+        variables.items.forEach((item) => {
+          delete next[item.key]
+        })
+        return next
+      })
+      setNotice(error.message)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['summary', 'live'] }),
+      ])
+    },
+  })
+
   const displayData = liveSummaryQuery.data ?? summaryQuery.data
+  const portfolioItems = (displayData?.portfolioItems ?? []).map((item) =>
+    Object.prototype.hasOwnProperty.call(portfolioInclusionOverrides, item.key)
+      ? { ...item, includedInTotals: portfolioInclusionOverrides[item.key] }
+      : item,
+  )
   const snapshotRuns = snapshotsQuery.data ?? []
   const hasSnapshots = snapshotRuns.length > 0
   const firstSnapshot = snapshotRuns[0]
@@ -605,6 +668,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     .filter((entry) => entry.dateKey.startsWith(profitYearKey))
     .reduce((total, entry) => total + entry.value, 0)
   const schedulerEnabled = schedulerQuery.data?.enabled ?? false
+  const fundingSummary = fundingFeesQuery.data
   const schedulerTimes = schedulerQuery.data?.snapshot_schedule_times ?? '08:00'
   const totalValue = displayData?.totalValueUsd ?? null
   const configuredChannelCount = channelsQuery.data?.length ?? 0
@@ -993,6 +1057,13 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                 )}
               </div>
             ) : null}
+            <FundingFeePanel
+              summary={fundingSummary}
+              selectedMonth={selectedFundingMonth}
+              isLoading={fundingFeesQuery.isFetching}
+              error={fundingFeesQuery.error?.message}
+              onMonthChange={setSelectedFundingMonth}
+            />
             {showSnapshotEditor ? (
               <div className="snapshot-list" aria-label="保存的快照">
                 {snapshotRuns.length === 0 ? (
@@ -1137,16 +1208,24 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           onTestChannel={(id) => testChannelMutation.mutate(id)}
           onDeleteChannel={(id) => deleteChannelMutation.mutate(id)}
           onSaveSchedule={(payload) => scheduleMutation.mutate(payload)}
+          portfolioItems={portfolioItems}
+          onUpdatePortfolioInclusion={(key, includedInTotals) => {
+            setPortfolioInclusionOverrides((current) => ({ ...current, [key]: includedInTotals }))
+            updatePortfolioInclusionMutation.mutate({ items: [{ key, includedInTotals }] })
+          }}
           liquidationMonitor={liquidationMonitorQuery.data}
           onSaveLiquidationMonitor={(payload) => liquidationMonitorMutation.mutate(payload)}
           onTestMiaotixingAlert={() => testMiaotixingAlertMutation.mutate()}
           onTestBarkAlert={() => testBarkAlertMutation.mutate()}
+          onClearSnapshots={() => clearSnapshotsMutation.mutate()}
           onResetSystem={() => resetSystemMutation.mutate()}
           isSavingChannel={createChannelMutation.isPending || updateChannelMutation.isPending}
           isSavingSchedule={scheduleMutation.isPending}
+          isSavingPortfolioInclusion={updatePortfolioInclusionMutation.isPending}
           isSavingLiquidationMonitor={liquidationMonitorMutation.isPending}
           isTestingMiaotixingAlert={testMiaotixingAlertMutation.isPending}
           isTestingBarkAlert={testBarkAlertMutation.isPending}
+          isClearingSnapshots={clearSnapshotsMutation.isPending}
           isResetting={resetSystemMutation.isPending}
           onClose={() => { setShowSettings(false); setEditingChannel(null) }}
         />
@@ -1166,16 +1245,21 @@ function SettingsDialog({
   onTestChannel,
   onDeleteChannel,
   onSaveSchedule,
+  portfolioItems,
+  onUpdatePortfolioInclusion,
   liquidationMonitor,
   onSaveLiquidationMonitor,
   onTestMiaotixingAlert,
   onTestBarkAlert,
+  onClearSnapshots,
   onResetSystem,
   isSavingChannel,
   isSavingSchedule,
+  isSavingPortfolioInclusion,
   isSavingLiquidationMonitor,
   isTestingMiaotixingAlert,
   isTestingBarkAlert,
+  isClearingSnapshots,
   isResetting,
   onClose,
 }: {
@@ -1187,16 +1271,21 @@ function SettingsDialog({
   onTestChannel: (id: number) => void
   onDeleteChannel: (id: number) => void
   onSaveSchedule: (payload: ScheduleResponse) => void
+  portfolioItems: PortfolioItem[]
+  onUpdatePortfolioInclusion: (key: string, includedInTotals: boolean) => void
   liquidationMonitor?: LiquidationMonitorResponse
   onSaveLiquidationMonitor: (payload: UpdateLiquidationMonitorPayload) => void
   onTestMiaotixingAlert: () => void
   onTestBarkAlert: () => void
+  onClearSnapshots: () => void
   onResetSystem: () => void
   isSavingChannel: boolean
   isSavingSchedule: boolean
+  isSavingPortfolioInclusion: boolean
   isSavingLiquidationMonitor: boolean
   isTestingMiaotixingAlert: boolean
   isTestingBarkAlert: boolean
+  isClearingSnapshots: boolean
   isResetting: boolean
   onClose: () => void
 }) {
@@ -1204,6 +1293,7 @@ function SettingsDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const [isConfirmingReset, setIsConfirmingReset] = useState(false)
+  const [isConfirmingClearSnapshots, setIsConfirmingClearSnapshots] = useState(false)
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement
@@ -1306,6 +1396,20 @@ function SettingsDialog({
           <article className="panel">
             <div className="panel-head">
               <div>
+                <p className="panel-kicker">统计</p>
+                <h3>计入范围</h3>
+              </div>
+            </div>
+            <PortfolioInclusionPanel
+              items={portfolioItems}
+              isSaving={isSavingPortfolioInclusion}
+              onToggle={onUpdatePortfolioInclusion}
+            />
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <div>
                 <p className="panel-kicker">风险</p>
                 <h3>爆仓监控</h3>
               </div>
@@ -1325,9 +1429,43 @@ function SettingsDialog({
             <div className="panel-head">
               <div>
                 <p className="panel-kicker">重置</p>
-                <h3>清空所有配置</h3>
+                <h3>危险操作</h3>
               </div>
             </div>
+            <p>只删除已保存的资产快照，渠道配置会保留。此操作无法撤销。</p>
+            {isConfirmingClearSnapshots ? (
+              <div className="danger-actions">
+                <button
+                  type="button"
+                  className="button button-danger"
+                  aria-label="确认清除资产快照"
+                  disabled={isClearingSnapshots}
+                  onClick={() => {
+                    onClearSnapshots()
+                    setIsConfirmingClearSnapshots(false)
+                  }}
+                >
+                  {isClearingSnapshots ? '清除中...' : '确认清除资产快照'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  disabled={isClearingSnapshots}
+                  onClick={() => setIsConfirmingClearSnapshots(false)}
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="button button-danger-ghost"
+                disabled={isClearingSnapshots}
+                onClick={() => setIsConfirmingClearSnapshots(true)}
+              >
+                清除资产快照
+              </button>
+            )}
             <p>将删除所有渠道和快照数据。此操作无法撤销。</p>
             {isConfirmingReset ? (
               <div className="danger-actions">
@@ -1365,6 +1503,58 @@ function SettingsDialog({
           </article>
         </div>
       </div>
+    </div>
+  )
+}
+
+function PortfolioInclusionPanel({
+  items,
+  isSaving,
+  onToggle,
+}: {
+  items: PortfolioItem[]
+  isSaving: boolean
+  onToggle: (key: string, includedInTotals: boolean) => void
+}) {
+  if (items.length === 0) {
+    return <p className="empty-copy">刷新资产后，这里会显示可配置的仓位和币种。</p>
+  }
+
+  const grouped = items.reduce<Record<string, PortfolioItem[]>>((acc, item) => {
+    const key = item.channelName
+    acc[key] = acc[key] ? [...acc[key], item] : [item]
+    return acc
+  }, {})
+
+  return (
+    <div className="portfolio-inclusion-list" aria-label="资产统计计入范围">
+      {Object.entries(grouped).map(([channelName, channelItems]) => (
+        <div key={channelName} className="portfolio-inclusion-group">
+          <div className="portfolio-inclusion-group-head">
+            <strong>{channelName}</strong>
+            <span>{`${channelItems.length} 项`}</span>
+          </div>
+          {channelItems.map((item) => {
+            const displayName = `${item.channelName} · ${humanizeAccountScope(item.accountScope)} · ${item.assetSymbol}`
+            return (
+              <label key={item.key} className="portfolio-inclusion-row">
+                <input
+                  type="checkbox"
+                  checked={item.includedInTotals}
+                  disabled={isSaving}
+                  aria-label={`计入统计 ${displayName}`}
+                  onChange={(event) => onToggle(item.key, event.target.checked)}
+                />
+                <span>
+                  <strong>{`${humanizeAccountScope(item.accountScope)} · ${item.assetSymbol}`}</strong>
+                  <em>{`${humanizeProvider(item.provider)} · ${formatUsd(item.valueUsd)}`}</em>
+                </span>
+                <b>{item.includedInTotals ? '计入统计' : '仅展示'}</b>
+              </label>
+            )
+          })}
+        </div>
+      ))}
     </div>
   )
 }
@@ -1508,6 +1698,72 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   )
+}
+
+function FundingFeePanel({
+  summary,
+  selectedMonth,
+  isLoading,
+  error,
+  onMonthChange,
+}: {
+  summary?: FundingFeeSummaryResponse
+  selectedMonth: string
+  isLoading: boolean
+  error?: string
+  onMonthChange: (value: string) => void
+}) {
+  const channels = summary?.channels ?? []
+
+  return (
+    <div className="funding-fee-panel" aria-label="资金费统计">
+      <div className="asset-totals-head funding-fee-head">
+        <div>
+          <h3>资金费统计</h3>
+          <span>{isLoading ? '统计中' : `${summary?.recordsCount ?? 0} 条结算记录`}</span>
+        </div>
+        <label className="field funding-month-field">
+          <span>资金费月份</span>
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(event) => onMonthChange(event.target.value)}
+          />
+        </label>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="funding-summary-grid">
+        <Metric label="资金费收取" value={formatUsd(summary?.received ?? '0')} />
+        <Metric label="资金费付出" value={formatUsd(summary?.paid ?? '0')} />
+        <Metric label="净资金费" value={formatUsd(summary?.net ?? '0')} />
+      </div>
+      <div className="funding-channel-list" role="list" aria-label="渠道资金费明细">
+        {channels.length > 0 ? (
+          channels.map((channel) => (
+            <div key={channel.channelId} className={`funding-channel-row status-${channel.status}`} role="listitem">
+              <div>
+                <strong>{channel.channelName}</strong>
+                <span>{`${humanizeProvider(channel.provider)} · ${fundingStatusText(channel.status)} · ${channel.recordsCount} 条`}</span>
+                {channel.error ? <em>{channel.error}</em> : null}
+              </div>
+              <b>{formatUsd(channel.received)}</b>
+              <b>{formatUsd(channel.paid)}</b>
+              <strong>{formatUsd(channel.net)}</strong>
+            </div>
+          ))
+        ) : (
+          <p className="empty-copy">暂无资金费记录。</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function fundingStatusText(value: string) {
+  if (value === 'success') return '已统计'
+  if (value === 'disabled') return '已停用'
+  if (value === 'failed') return '失败'
+  return value
 }
 
 function ChannelList({

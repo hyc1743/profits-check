@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from decimal import Decimal
 
 import pytest
@@ -1012,9 +1013,7 @@ async def test_bybit_provider_collects_crypto_loans_from_asset_overview(
         ("CRYPTO_LOANS_TOTAL", Decimal("3348.59")),
     ]
     assert '"coin": "USD1"' in crypto_loan_assets[0].metadata["coinDetail"]
-    assert not any(
-        asset.metadata["type"] == "unified_trading_account" for asset in snapshot.assets
-    )
+    assert not any(asset.metadata["type"] == "unified_trading_account" for asset in snapshot.assets)
 
 
 @pytest.mark.asyncio
@@ -1464,3 +1463,226 @@ def test_provider_registry_exposes_placeholders_and_contract() -> None:
 
     with pytest.raises(ProviderError):
         asyncio.run(provider.collect_snapshot())
+
+
+@pytest.mark.asyncio
+async def test_binance_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.binance import BinanceProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://fapi.binance.com/fapi/v1/income?incomeType=FUNDING_FEE"
+            "&startTime=1700000000000&endTime=1702591999999&limit=1000"
+            "&timestamp=1702600000000&signature=expected"
+        ),
+        json=[
+            {"symbol": "BTCUSDT", "income": "1.25", "asset": "USDT", "time": 1700000000000},
+            {"symbol": "ETHUSDT", "income": "-0.5", "asset": "USDT", "time": 1700003600000},
+        ],
+    )
+    provider = BinanceProvider(
+        channel_name="Main",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: 1702600000000,
+        signature_factory=lambda query, secret: "expected",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert [record.amount for record in records] == [Decimal("1.25"), Decimal("-0.5")]
+    assert records[0].symbol == "BTCUSDT"
+
+
+@pytest.mark.asyncio
+async def test_gate_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.gate import GateProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://api.gateio.ws/api/v4/futures/usdt/account_book"
+            "?from=1700000000&to=1702591999&type=fund&limit=1000"
+        ),
+        json=[
+            {
+                "time": 1700000000,
+                "change": "2",
+                "balance": "10",
+                "type": "fund",
+                "text": "BTC_USDT:1",
+            },
+            {
+                "time": 1700003600,
+                "change": "-0.75",
+                "balance": "9.25",
+                "type": "fund",
+                "text": "ETH_USDT:2",
+            },
+        ],
+    )
+    provider = GateProvider(
+        channel_name="Gate",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1702600000",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert [record.amount for record in records] == [Decimal("2"), Decimal("-0.75")]
+    assert records[0].symbol == "BTC_USDT"
+
+
+@pytest.mark.asyncio
+async def test_okx_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    for subtype, pnl in (("173", "-1.2"), ("174", "3.4")):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                "https://www.okx.com/api/v5/account/bills-archive"
+                f"?subType={subtype}&begin=1700000000000&end=1702591999999&limit=100"
+            ),
+            json={
+                "code": "0",
+                "data": [
+                    {
+                        "subType": subtype,
+                        "pnl": pnl,
+                        "ccy": "USDT",
+                        "ts": "1700000000000",
+                        "instId": "BTC-USDT-SWAP",
+                    }
+                ],
+            },
+        )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "key", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2024-01-01T00:00:00.000Z",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert [record.amount for record in records] == [Decimal("-1.2"), Decimal("3.4")]
+    assert records[0].symbol == "BTC-USDT-SWAP"
+
+
+@pytest.mark.asyncio
+async def test_bitget_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.bitget import BitgetProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://api.bitget.com/api/v2/mix/account/bill?productType=USDT-FUTURES"
+            "&businessType=contract_settle_fee&startTime=1700000000000"
+            "&endTime=1702591999999&limit=100"
+        ),
+        json={
+            "code": "00000",
+            "data": {
+                "bills": [
+                    {
+                        "billId": "1",
+                        "symbol": "BTCUSDT",
+                        "amount": "-0.9",
+                        "businessType": "contract_settle_fee",
+                        "coin": "USDT",
+                        "cTime": "1700000000000",
+                    }
+                ],
+                "endId": "",
+            },
+        },
+    )
+    provider = BitgetProvider(
+        channel_name="Bitget",
+        config={},
+        secrets={"apiKey": "key", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "1702600000000",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert len(records) == 1
+    assert records[0].amount == Decimal("-0.9")
+    assert records[0].symbol == "BTCUSDT"
+
+
+@pytest.mark.asyncio
+async def test_bybit_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://api.bybit.com/v5/account/transaction-log?accountType=UNIFIED"
+            "&category=linear&startTime=1700000000000&endTime=1702591999999&limit=50"
+        ),
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "currency": "USDT",
+                        "funding": "4.2",
+                        "transactionTime": "1700000000000",
+                    },
+                    {
+                        "symbol": "ETHUSDT",
+                        "currency": "USDT",
+                        "funding": "0",
+                        "transactionTime": "1700000000001",
+                    },
+                ],
+                "nextPageCursor": "",
+            },
+        },
+    )
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "key", "apiSecret": "secret"},
+        now_factory=lambda: "1702600000000",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert len(records) == 1
+    assert records[0].amount == Decimal("4.2")
+
+
+@pytest.mark.asyncio
+async def test_aster_provider_collects_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.aster import AsterProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=re.compile(r"https://fapi\.asterdex\.com/fapi/v1/income\?.*incomeType=FUNDING_FEE"),
+        json=[
+            {
+                "symbol": "BTCUSDT",
+                "income": "0.33",
+                "asset": "USDT",
+                "time": 1700000000000,
+            }
+        ],
+    )
+    provider = AsterProvider(
+        channel_name="Aster",
+        config={},
+        secrets={"user": "user", "signer": "signer", "privateKey": "private"},
+        now_factory=lambda: 1702600000000000,
+        signature_factory=lambda message, private_key: "signature",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert len(records) == 1
+    assert records[0].amount == Decimal("0.33")

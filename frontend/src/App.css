@@ -137,7 +137,8 @@
 
 .system-strip,
 .mini-metrics,
-.profit-summary-grid {
+.profit-summary-grid,
+.funding-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
@@ -150,6 +151,10 @@
 .mini-metrics {
   grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
   margin: 0 0 1rem;
+}
+
+.funding-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .panel,
@@ -334,7 +339,8 @@
 
 .asset-trend-block,
 .liquidation-block,
-.distribution-block {
+.distribution-block,
+.funding-fee-panel {
   margin-top: 1.1rem;
   padding-top: 1.1rem;
   border-top: 1px solid rgba(240, 185, 11, 0.14);
@@ -379,7 +385,8 @@
 
 .channel-share-row,
 .account-row,
-.risk-row {
+.risk-row,
+.funding-channel-row {
   border-bottom: 1px solid var(--border-faint);
 }
 
@@ -409,10 +416,69 @@
 .account-row strong,
 .account-row span,
 .channel-share-row strong,
+.funding-channel-row strong,
+.funding-channel-row span,
+.funding-channel-row em,
 .risk-row strong,
 .risk-row span,
 .snapshot-copy span {
   overflow-wrap: anywhere;
+}
+
+.funding-fee-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.funding-fee-head {
+  align-items: center;
+}
+
+.funding-month-field {
+  width: min(100%, 12rem);
+}
+
+.funding-channel-list {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.funding-channel-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) repeat(3, minmax(6.5rem, auto));
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.85rem 0;
+}
+
+.funding-channel-row div {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.funding-channel-row span,
+.funding-channel-row em {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.funding-channel-row em {
+  color: var(--danger-strong);
+}
+
+.funding-channel-row b,
+.funding-channel-row > strong {
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.funding-channel-row.status-failed > strong {
+  color: var(--danger-strong);
 }
 
 .risk-tabs {
@@ -788,7 +854,7 @@ details[open] summary::before {
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--border-mild);
   border-radius: var(--radius-sm);
-  background: var(--surface-panel);
+  background: var(--surface-panel-nested);
   cursor: pointer;
 }
 
@@ -893,6 +959,75 @@ details[open] summary::before {
   accent-color: var(--positive);
 }
 
+.portfolio-inclusion-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.portfolio-inclusion-group {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.portfolio-inclusion-group-head,
+.portfolio-inclusion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.portfolio-inclusion-group-head strong {
+  color: var(--ink);
+}
+
+.portfolio-inclusion-group-head span,
+.portfolio-inclusion-row em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.portfolio-inclusion-row {
+  padding: 0.62rem 0.68rem;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-nested);
+  cursor: pointer;
+}
+
+.portfolio-inclusion-row input {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  accent-color: var(--positive);
+}
+
+.portfolio-inclusion-row span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 0.14rem;
+}
+
+.portfolio-inclusion-row strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portfolio-inclusion-row b {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -949,6 +1084,7 @@ details[open] summary::before {
   .mini-metrics,
   .distribution-grid,
   .profit-summary-grid,
+  .funding-summary-grid,
   .channel-layout {
     grid-template-columns: 1fr;
   }
@@ -976,22 +1112,29 @@ details[open] summary::before {
   .account-row,
   .channel-share-row,
   .risk-row,
+  .funding-channel-row,
   .channel-card {
     grid-template-columns: 1fr;
     gap: 0.35rem;
   }
 
-  .risk-alert {
+  .risk-alert,
+  .funding-channel-row b,
+  .funding-channel-row > strong {
     justify-self: start;
+    text-align: left;
   }
 
-  .calendar-toolbar {
+  .calendar-toolbar,
+  .funding-fee-head {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .calendar-month-field {
+  .calendar-month-field,
+  .funding-month-field {
     min-width: 0;
+    width: 100%;
   }
 }
 

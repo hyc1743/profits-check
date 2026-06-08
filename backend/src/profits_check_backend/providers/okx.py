@@ -13,6 +13,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -149,6 +150,41 @@ class OkxProvider(Provider):
             updated_at_ms=_optional_int(account.get("uTime")),
             raw_payload=dict(account),
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://www.okx.com"))
+        ).rstrip("/")
+        records: list[FundingFeeRecord] = []
+        async with provider_http_client() as client:
+            for sub_type in ("173", "174"):
+                payload = await self._get_okx(
+                    client,
+                    base_url,
+                    "/api/v5/account/bills-archive",
+                    {
+                        "subType": sub_type,
+                        "begin": str(start_time_ms),
+                        "end": str(end_time_ms),
+                        "limit": "100",
+                    },
+                )
+                records.extend(
+                    FundingFeeRecord(
+                        provider="okx",
+                        channel_name=self.channel_name,
+                        amount=Decimal(str(item.get("pnl", "0"))),
+                        asset=str(item.get("ccy", "USDT")).upper(),
+                        timestamp_ms=int(str(item.get("ts", "0"))),
+                        symbol=str(item.get("instId", "")) or None,
+                        raw_payload=dict(item),
+                    )
+                    for item in payload.get("data", [])
+                    if isinstance(item, dict) and Decimal(str(item.get("pnl", "0"))) != 0
+                )
+        return records
 
     async def _collect_contract_margin_balance_from_account_balance(
         self, base_url: str
@@ -427,7 +463,9 @@ def _strategy_value_usd(item: dict[str, object]) -> Decimal | None:
 
 
 def _strategy_quantity(item: dict[str, object], value_usd: Decimal | None) -> Decimal:
-    quantity = _first_decimal(item, "totalAmt", "sz", "pos", "investment", "investmentAmt", "investAmt")
+    quantity = _first_decimal(
+        item, "totalAmt", "sz", "pos", "investment", "investmentAmt", "investAmt"
+    )
     if quantity is not None:
         return quantity
     return value_usd or Decimal("0")

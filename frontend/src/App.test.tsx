@@ -21,6 +21,20 @@ const summaryPayload = {
       assetCount: 2,
     },
   ],
+  portfolioItems: [
+    {
+      key: 'channel:1|provider:onchain|scope:token_total|asset:ONCHAIN_TOTAL',
+      channelId: 1,
+      channelName: 'EVM Wallets',
+      provider: 'onchain',
+      accountScope: 'token_total',
+      assetSymbol: 'ONCHAIN_TOTAL',
+      label: 'EVM Wallets · token_total · ONCHAIN_TOTAL',
+      quantity: '0E-8',
+      valueUsd: '4025.00000000',
+      includedInTotals: true,
+    },
+  ],
   channels: [{ provider: 'onchain', name: 'EVM Wallets', latestSnapshotTotalUsd: '4025.00000000' }],
 }
 
@@ -48,6 +62,44 @@ const liveSummaryPayload = {
       accountScope: 'earn',
       valueUsd: '800.00000000',
       assetCount: 1,
+    },
+  ],
+  portfolioItems: [
+    {
+      key: 'channel:1|provider:binance|scope:spot|asset:BTC',
+      channelId: 1,
+      channelName: '主账户',
+      provider: 'binance',
+      accountScope: 'spot',
+      assetSymbol: 'BTC',
+      label: '主账户 · spot · BTC',
+      quantity: '0.05000000',
+      valueUsd: '3250.00000000',
+      includedInTotals: true,
+    },
+    {
+      key: 'channel:1|provider:binance|scope:futures|asset:USDT',
+      channelId: 1,
+      channelName: '主账户',
+      provider: 'binance',
+      accountScope: 'futures',
+      assetSymbol: 'USDT',
+      label: '主账户 · futures · USDT',
+      quantity: '1200.00000000',
+      valueUsd: '1200.00000000',
+      includedInTotals: true,
+    },
+    {
+      key: 'channel:1|provider:binance|scope:earn|asset:USDT',
+      channelId: 1,
+      channelName: '主账户',
+      provider: 'binance',
+      accountScope: 'earn',
+      assetSymbol: 'USDT',
+      label: '主账户 · earn · USDT',
+      quantity: '800.00000000',
+      valueUsd: '800.00000000',
+      includedInTotals: true,
     },
   ],
   channels: [{ provider: 'onchain', name: 'EVM Wallets', latestSnapshotTotalUsd: '5250.00000000' }],
@@ -177,6 +229,29 @@ const liquidationMonitorPayload = {
   ],
 }
 
+const fundingFeesPayload = {
+  month: '2026-06',
+  startTime: '2026-06-01T00:00:00+08:00',
+  endTime: '2026-07-01T00:00:00+08:00',
+  received: '12.50000000',
+  paid: '2.25000000',
+  net: '10.25000000',
+  recordsCount: 2,
+  channels: [
+    {
+      channelId: 1,
+      channelName: '主账户',
+      provider: 'binance',
+      received: '12.50000000',
+      paid: '2.25000000',
+      net: '10.25000000',
+      recordsCount: 2,
+      status: 'success',
+      error: null,
+    },
+  ],
+}
+
 function installHandlers() {
   server.use(
     http.get('/api/auth/session', () => HttpResponse.json({ authenticated: true })),
@@ -191,6 +266,7 @@ function installHandlers() {
     http.get('/api/schedule', () => HttpResponse.json(schedulePayload)),
     http.get('/api/system/scheduler', () => HttpResponse.json(schedulerPayload)),
     http.get('/api/liquidation-monitor', () => HttpResponse.json(liquidationMonitorPayload)),
+    http.get('/api/funding-fees', () => HttpResponse.json(fundingFeesPayload)),
     http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(liquidationMonitorPayload)),
     http.post('/api/liquidation-monitor/test-alert', () => HttpResponse.json({ status: 'sent' })),
     http.post('/api/liquidation-monitor/test-alert/miaotixing', () => HttpResponse.json({ status: 'sent' })),
@@ -222,6 +298,7 @@ function installHandlers() {
         },
       })
     }),
+    http.put('/api/portfolio-inclusion-rules', async ({ request }) => HttpResponse.json(await request.json())),
     http.put('/api/system/scheduler', async ({ request }) =>
       HttpResponse.json({ ...schedulerPayload, ...((await request.json()) as Record<string, unknown>) }),
     ),
@@ -345,6 +422,40 @@ test('live refresh shows account categories', async () => {
   expect(screen.getByText('主账户 · 现货')).toBeInTheDocument()
   expect(screen.getByText('主账户 · 合约')).toBeInTheDocument()
   expect(screen.getByText('主账户 · 理财')).toBeInTheDocument()
+})
+
+test('updates portfolio inclusion rules from settings', async () => {
+  installHandlers()
+  const updates: unknown[] = []
+  server.use(
+    http.put('/api/portfolio-inclusion-rules', async ({ request }) => {
+      const body = await request.json()
+      updates.push(body)
+      return HttpResponse.json(body)
+    }),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  const checkbox = await screen.findByRole('checkbox', { name: /EVM Wallets.*ONCHAIN_TOTAL/ })
+  expect(checkbox).toBeChecked()
+
+  await user.click(checkbox)
+
+  await waitFor(() => {
+    expect(updates).toEqual([
+      {
+        items: [
+          {
+            key: 'channel:1|provider:onchain|scope:token_total|asset:ONCHAIN_TOTAL',
+            includedInTotals: false,
+          },
+        ],
+      },
+    ])
+  })
 })
 
 test('shows liquidation risk positions without refreshing on initial dashboard load', async () => {
@@ -811,6 +922,42 @@ test('clears all channels and snapshots from settings after confirmation', async
   await waitFor(() => expect(resetCalled).toBe(true))
   expect(await screen.findByText('所有配置已清空。')).toBeInTheDocument()
   expect(await screen.findByText('还没有渠道')).toBeInTheDocument()
+  expect(await screen.findByText('还没有快照')).toBeInTheDocument()
+})
+
+test('clears only saved snapshots from settings after confirmation', async () => {
+  installHandlers()
+  let clearSnapshotsCalled = false
+  server.use(
+    http.delete('/api/snapshots', () => {
+      clearSnapshotsCalled = true
+      return new HttpResponse(null, { status: 204 })
+    }),
+    http.get('/api/snapshots/series', () =>
+      HttpResponse.json(clearSnapshotsCalled ? [] : snapshotsPayload),
+    ),
+    http.get('/api/summary/latest', () =>
+      HttpResponse.json(
+        clearSnapshotsCalled
+          ? { totalValueUsd: null, assetCount: 0, accountCategoryTotals: [], channels: [] }
+          : summaryPayload,
+      ),
+    ),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
+  await user.click(await screen.findByRole('button', { name: '设置' }))
+  await user.click(screen.getByRole('button', { name: '清除资产快照' }))
+  expect(screen.getByText('只删除已保存的资产快照，渠道配置会保留。此操作无法撤销。')).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '确认清除资产快照' }))
+
+  await waitFor(() => expect(clearSnapshotsCalled).toBe(true))
+  expect(await screen.findByText('资产快照已清除。')).toBeInTheDocument()
+  expect(screen.getByText('EVM Wallets')).toBeInTheDocument()
   expect(await screen.findByText('还没有快照')).toBeInTheDocument()
 })
 

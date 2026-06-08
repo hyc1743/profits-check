@@ -43,6 +43,10 @@ from profits_check_backend.services.channels import (
     get_or_create_setting,
     list_channels,
 )
+from profits_check_backend.services.funding_fees import (
+    collect_monthly_funding_fee_summary,
+    funding_fee_summary_payload,
+)
 from profits_check_backend.services.liquidation_monitor import (
     get_liquidation_monitor_payload,
     load_liquidation_monitor_config,
@@ -55,12 +59,14 @@ from profits_check_backend.services.liquidation_monitor import (
 from profits_check_backend.services.snapshots import (
     _get_okx_dex_secrets,
     collect_live_summary,
+    delete_all_snapshots,
     delete_snapshot_run,
     execute_snapshot_run,
     get_latest_summary,
     list_snapshot_runs,
     quantize_decimal,
     snapshot_detail,
+    update_portfolio_inclusion_rules,
 )
 
 SECRET_PUBLIC_CONFIG_KEYS = {
@@ -209,9 +215,7 @@ class LiquidationMonitorPayload(BaseModel):
         default=None, alias="marginBalanceThresholdPercent", gt=0
     )
     adl_monitor_enabled: bool | None = Field(default=None, alias="adlMonitorEnabled")
-    adl_threshold_percent: Decimal | None = Field(
-        default=None, alias="adlThresholdPercent", gt=0
-    )
+    adl_threshold_percent: Decimal | None = Field(default=None, alias="adlThresholdPercent", gt=0)
     adl_window_seconds: int | None = Field(default=None, alias="adlWindowSeconds", gt=0)
     adl_sample_interval_seconds: int | None = Field(
         default=None, alias="adlSampleIntervalSeconds", gt=0
@@ -242,9 +246,23 @@ class LiquidationMonitorPayload(BaseModel):
         if self.monitor_enabled is not None and self.position_monitor_enabled is None:
             return self.monitor_enabled
         return (
-            self.resolved_position_monitor_enabled or self.resolved_margin_balance_monitor_enabled
+            self.resolved_position_monitor_enabled
+            or self.resolved_margin_balance_monitor_enabled
             or self.resolved_adl_monitor_enabled
         )
+
+
+class PortfolioInclusionRuleItemPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    key: str = Field(min_length=1, max_length=260)
+    included_in_totals: bool = Field(alias="includedInTotals")
+
+
+class PortfolioInclusionRulesPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[PortfolioInclusionRuleItemPayload]
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -777,6 +795,47 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         finally:
             app.state.live_summary_lock.release()
 
+    @app.get("/api/funding-fees")
+    def funding_fees(
+        month: str,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        channels = list(
+            session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
+        )
+        try:
+            summary = asyncio.run(
+                collect_monthly_funding_fee_summary(
+                    month=month,
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return funding_fee_summary_payload(summary)
+
+    @app.put("/api/portfolio-inclusion-rules")
+    def put_portfolio_inclusion_rules(
+        payload: PortfolioInclusionRulesPayload,
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        return {
+            "items": update_portfolio_inclusion_rules(
+                session,
+                [
+                    {
+                        "key": item.key,
+                        "includedInTotals": item.included_in_totals,
+                    }
+                    for item in payload.items
+                ],
+            )
+        }
+
     @app.post("/api/snapshots/run")
     def run_snapshots(
         _: object = Depends(require_session), session: Session = Depends(get_session)
@@ -829,6 +888,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     ):
         if not delete_snapshot_run(session, run_id):
             raise HTTPException(status_code=404, detail="Snapshot run not found")
+
+    @app.delete("/api/snapshots", status_code=204)
+    def delete_all_snapshot_series(
+        _: object = Depends(require_session), session: Session = Depends(get_session)
+    ):
+        delete_all_snapshots(session)
 
     @app.get("/api/snapshots/{snapshot_id}")
     def get_snapshot(

@@ -32,10 +32,24 @@ export interface SummaryAccountCategoryTotal {
   assetCount: number
 }
 
+export interface PortfolioItem {
+  key: string
+  channelId: number
+  channelName: string
+  provider: string
+  accountScope: string
+  assetSymbol: string
+  label: string
+  quantity: string | null
+  valueUsd: string | null
+  includedInTotals: boolean
+}
+
 export interface SummaryResponse {
   totalValueUsd: string | null
   assetCount: number
   accountCategoryTotals: SummaryAccountCategoryTotal[]
+  portfolioItems?: PortfolioItem[]
   channels: SummaryChannel[]
 }
 
@@ -208,6 +222,36 @@ export interface CreateChannelPayload {
   secretConfig: Record<string, string>
 }
 
+export interface UpdatePortfolioInclusionRulesPayload {
+  items: Array<{
+    key: string
+    includedInTotals: boolean
+  }>
+}
+
+export interface FundingFeeChannelSummary {
+  channelId: number
+  channelName: string
+  provider: string
+  received: string
+  paid: string
+  net: string
+  recordsCount: number
+  status: string
+  error?: string | null
+}
+
+export interface FundingFeeSummaryResponse {
+  month: string
+  startTime: string
+  endTime: string
+  received: string
+  paid: string
+  net: string
+  recordsCount: number
+  channels: FundingFeeChannelSummary[]
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: 'include',
@@ -248,6 +292,13 @@ export const api = {
   getHealth: () => requestJson<HealthResponse>('/api/health'),
   getLatestSummary: () => requestJson<SummaryResponse>('/api/summary/latest'),
   getLiveSummary: () => requestJson<SummaryResponse>('/api/summary/live'),
+  getFundingFees: (month: string) =>
+    requestJson<FundingFeeSummaryResponse>(`/api/funding-fees?month=${encodeURIComponent(month)}`),
+  updatePortfolioInclusionRules: (payload: UpdatePortfolioInclusionRulesPayload) =>
+    requestJson<UpdatePortfolioInclusionRulesPayload>('/api/portfolio-inclusion-rules', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getChannels: () => requestJson<ChannelResponse[]>('/api/channels'),
   getOnchainChains: () => requestJson<OnchainChainOption[]>('/api/onchain/chains'),
   createChannel: (payload: CreateChannelPayload) =>
@@ -271,6 +322,7 @@ export const api = {
     requestJson<SnapshotDetailResponse>(`/api/snapshots/${snapshotId}`),
   deleteSnapshotRun: (runId: number) =>
     requestJson<void>(`/api/snapshots/runs/${runId}`, { method: 'DELETE' }),
+  clearSnapshots: () => requestJson<void>('/api/snapshots', { method: 'DELETE' }),
   runSnapshot: () =>
     requestJson<RunSnapshotResponse>('/api/snapshots/run', {
       method: 'POST',

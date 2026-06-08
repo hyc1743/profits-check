@@ -70,6 +70,17 @@ class ContractMarginBalanceRisk:
         return value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
 
 
+@dataclass(slots=True, eq=True)
+class FundingFeeRecord:
+    provider: str
+    channel_name: str
+    amount: Decimal
+    asset: str
+    timestamp_ms: int
+    symbol: str | None = None
+    raw_payload: dict[str, object] = field(default_factory=dict)
+
+
 class Provider:
     async def collect_snapshot(self) -> ProviderSnapshot:
         raise NotImplementedError
@@ -79,3 +90,8 @@ class Provider:
 
     async def collect_contract_margin_balance(self) -> ContractMarginBalanceRisk | None:
         return None
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        return []

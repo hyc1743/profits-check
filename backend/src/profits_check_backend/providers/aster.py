@@ -14,6 +14,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -266,6 +267,39 @@ class AsterProvider(Provider):
             unrealized_pnl=unrealized_pnl,
             raw_payload={"perpAssets": result.get("perpAssets", []), "positions": positions},
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        base_url = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip("/")
+        path = "/fapi/v1/income"
+        params = self._signed_params(
+            {
+                "incomeType": "FUNDING_FEE",
+                "startTime": str(start_time_ms),
+                "endTime": str(end_time_ms),
+                "limit": "1000",
+            }
+        )
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", params=params)
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, list):
+            raise ProviderError("Aster funding fee request failed")
+        return [
+            FundingFeeRecord(
+                provider="aster",
+                channel_name=self.channel_name,
+                amount=Decimal(str(item.get("income", "0"))),
+                asset=str(item.get("asset", "USDT")).upper(),
+                timestamp_ms=int(str(item.get("time", "0"))),
+                symbol=str(item.get("symbol", "")) or None,
+                raw_payload=dict(item),
+            )
+            for item in payload
+            if Decimal(str(item.get("income", "0"))) != 0
+        ]
 
     def _signed_params(self, params: dict[str, str]) -> dict[str, str]:
         user = str(self.secrets.get("user", self.secrets.get("asterUser", "")))

@@ -11,6 +11,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -169,7 +170,9 @@ class BybitProvider(Provider):
             return None
         account = accounts[0]
         wallet_balance = Decimal(str(account.get("totalWalletBalance", "0")))
-        margin_balance = Decimal(str(account.get("totalMarginBalance", account.get("totalEquity", "0"))))
+        margin_balance = Decimal(
+            str(account.get("totalMarginBalance", account.get("totalEquity", "0")))
+        )
         unrealized_pnl = Decimal(str(account.get("totalPerpUPL", "0")))
         if wallet_balance == 0 and margin_balance == 0 and unrealized_pnl == 0:
             return None
@@ -181,6 +184,62 @@ class BybitProvider(Provider):
             unrealized_pnl=unrealized_pnl,
             raw_payload=dict(account),
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bybit.com"))
+        ).rstrip("/")
+        category = str(self.config.get("fundingCategory", self.config.get("category", "linear")))
+        records: list[FundingFeeRecord] = []
+        cursor: str | None = None
+
+        async with provider_http_client() as client:
+            while True:
+                params = {
+                    "accountType": "UNIFIED",
+                    "category": category,
+                    "startTime": str(start_time_ms),
+                    "endTime": str(end_time_ms),
+                    "limit": "50",
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                query_string = urlencode(params)
+                headers = self._signature_headers(query_string)
+                response = await client.get(
+                    f"{base_url}/v5/account/transaction-log",
+                    headers=headers,
+                    params=params,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("retCode") not in {0, "0"}:
+                    raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
+                result = payload.get("result", {})
+                items = result.get("list", []) if isinstance(result, dict) else []
+                records.extend(
+                    FundingFeeRecord(
+                        provider="bybit",
+                        channel_name=self.channel_name,
+                        amount=Decimal(str(item.get("funding", "0"))),
+                        asset=str(item.get("currency", "USDT")).upper(),
+                        timestamp_ms=int(str(item.get("transactionTime", "0"))),
+                        symbol=str(item.get("symbol", "")) or None,
+                        raw_payload=dict(item),
+                    )
+                    for item in items
+                    if isinstance(item, dict) and Decimal(str(item.get("funding", "0"))) != 0
+                )
+                next_cursor = (
+                    str(result.get("nextPageCursor", "")) if isinstance(result, dict) else ""
+                )
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+        return records
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(

@@ -11,6 +11,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -131,6 +132,42 @@ class GateProvider(Provider):
             unrealized_pnl=unrealized_pnl,
             raw_payload=dict(payload),
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.gateio.ws/api/v4"))
+        ).rstrip("/")
+        settle = str(self.config.get("settle", "usdt")).lower()
+        path = f"/futures/{settle}/account_book"
+        params = {
+            "from": str(start_time_ms // 1000),
+            "to": str(end_time_ms // 1000),
+            "type": "fund",
+            "limit": "1000",
+        }
+        query = "&".join(f"{key}={value}" for key, value in params.items())
+        headers = self._signature_headers("GET", "/api/v4" + path, query=query)
+        async with provider_http_client() as client:
+            response = await client.get(f"{base_url}{path}", headers=headers, params=params)
+            response.raise_for_status()
+            payload = response.json()
+
+        asset = settle.upper()
+        return [
+            FundingFeeRecord(
+                provider="gate",
+                channel_name=self.channel_name,
+                amount=Decimal(str(item.get("change", "0"))),
+                asset=asset,
+                timestamp_ms=int(Decimal(str(item.get("time", "0"))) * Decimal("1000")),
+                symbol=_gate_account_book_symbol(item.get("text")),
+                raw_payload=dict(item),
+            )
+            for item in payload
+            if Decimal(str(item.get("change", "0"))) != 0
+        ]
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         size = Decimal(str(item.get("size", "0")))
@@ -264,3 +301,10 @@ def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
     return int(str(value))
+
+
+def _gate_account_book_symbol(value: object) -> str | None:
+    text = str(value or "")
+    if ":" not in text:
+        return text or None
+    return text.split(":", maxsplit=1)[0] or None

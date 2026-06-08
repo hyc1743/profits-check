@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import time
 from decimal import Decimal
+from urllib.parse import urlencode
 
 import httpx
 
@@ -12,6 +13,7 @@ from profits_check_backend.providers.base import (
     AssetBalance,
     ContractMarginBalanceRisk,
     ContractPositionRisk,
+    FundingFeeRecord,
     Provider,
     ProviderError,
     ProviderSnapshot,
@@ -120,6 +122,64 @@ class BitgetProvider(Provider):
             unrealized_pnl=unrealized_pnl,
             raw_payload=dict(payload),
         )
+
+    async def collect_funding_fee_records(
+        self, start_time_ms: int, end_time_ms: int
+    ) -> list[FundingFeeRecord]:
+        base_url = str(
+            self.config.get("baseUrl", self.config.get("base_url", "https://api.bitget.com"))
+        ).rstrip("/")
+        product_type = str(self.config.get("productType", "USDT-FUTURES"))
+        path = "/api/v2/mix/account/bill"
+        records: list[FundingFeeRecord] = []
+        chunk_start = start_time_ms
+        max_interval_ms = 30 * 24 * 60 * 60 * 1000
+
+        async with provider_http_client() as client:
+            while chunk_start <= end_time_ms:
+                chunk_end = min(end_time_ms, chunk_start + max_interval_ms - 1)
+                cursor: str | None = None
+                while True:
+                    params = {
+                        "productType": product_type,
+                        "businessType": "contract_settle_fee",
+                        "startTime": str(chunk_start),
+                        "endTime": str(chunk_end),
+                        "limit": "100",
+                    }
+                    if cursor:
+                        params["idLessThan"] = cursor
+                    query = urlencode(params)
+                    headers = self._signature_headers("GET", path, query=query)
+                    response = await client.get(f"{base_url}{path}", headers=headers, params=params)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if payload.get("code") not in {0, "0", "00000", None}:
+                        raise ProviderError(str(payload.get("msg", "Bitget request failed")))
+                    data = payload.get("data", {})
+                    bills = data.get("bills", []) if isinstance(data, dict) else []
+                    records.extend(
+                        FundingFeeRecord(
+                            provider="bitget",
+                            channel_name=self.channel_name,
+                            amount=Decimal(str(item.get("amount", "0"))),
+                            asset=str(item.get("coin", "USDT")).upper(),
+                            timestamp_ms=int(str(item.get("cTime", "0"))),
+                            symbol=str(item.get("symbol", "")) or None,
+                            raw_payload=dict(item),
+                        )
+                        for item in bills
+                        if isinstance(item, dict)
+                        and item.get("businessType") == "contract_settle_fee"
+                        and Decimal(str(item.get("amount", "0"))) != 0
+                    )
+                    next_cursor = str(data.get("endId", "")) if isinstance(data, dict) else ""
+                    if not bills or not next_cursor or next_cursor == cursor:
+                        break
+                    cursor = next_cursor
+                chunk_start = chunk_end + 1
+
+        return records
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(
