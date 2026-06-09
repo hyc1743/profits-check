@@ -272,7 +272,7 @@ class AsterProvider(Provider):
         self, start_time_ms: int, end_time_ms: int
     ) -> list[FundingFeeRecord]:
         base_url = str(self.config.get("futuresBaseUrl", "https://fapi.asterdex.com")).rstrip("/")
-        path = "/fapi/v1/income"
+        path = "/fapi/v3/income"
         params = self._signed_params(
             {
                 "incomeType": "FUNDING_FEE",

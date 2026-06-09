@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from decimal import Decimal
 
 import pytest
@@ -1708,7 +1707,11 @@ async def test_aster_provider_collects_funding_fee_records(httpx_mock) -> None:
 
     httpx_mock.add_response(
         method="GET",
-        url=re.compile(r"https://fapi\.asterdex\.com/fapi/v1/income\?.*incomeType=FUNDING_FEE"),
+        url=(
+            "https://fapi.asterdex.com/fapi/v3/income?incomeType=FUNDING_FEE"
+            "&startTime=1700000000000&endTime=1702591999999&limit=1000"
+            "&user=user&signer=signer&nonce=1702600000000000&signature=signature"
+        ),
         json=[
             {
                 "symbol": "BTCUSDT",
