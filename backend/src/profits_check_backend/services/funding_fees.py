@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -14,6 +14,7 @@ from profits_check_backend.services.channels import decode_public_config, decode
 
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 MONTH_TIMEZONE = ZoneInfo("Asia/Shanghai")
+SEVEN_DAY_WINDOW_PROVIDERS = {"gate", "bybit"}
 
 
 @dataclass(slots=True)
@@ -82,7 +83,13 @@ async def collect_monthly_funding_fee_summary(
                 config=decode_public_config(channel),
                 secrets=decode_secret_config(channel, cipher),
             )
-            records = await provider.collect_funding_fee_records(start_ms, end_ms)
+            records: list[FundingFeeRecord] = []
+            for window_start_ms, window_end_ms in funding_fee_query_windows(
+                channel.provider, start_time, end_time
+            ):
+                records.extend(
+                    await provider.collect_funding_fee_records(window_start_ms, window_end_ms)
+                )
             return summarize_channel_records(channel, records)
         except Exception as exc:
             return FundingFeeChannelSummary(
@@ -108,6 +115,31 @@ async def collect_monthly_funding_fee_summary(
         records_count=records_count,
         channels=channel_summaries,
     )
+
+
+def funding_fee_query_windows(
+    provider: str, start_time: datetime, end_time: datetime
+) -> list[tuple[int, int]]:
+    if provider.lower() not in SEVEN_DAY_WINDOW_PROVIDERS:
+        return [
+            (
+                int(start_time.astimezone(UTC).timestamp() * 1000),
+                int(end_time.astimezone(UTC).timestamp() * 1000) - 1,
+            )
+        ]
+
+    windows: list[tuple[int, int]] = []
+    current = start_time
+    while current < end_time:
+        next_time = min(current + timedelta(days=7), end_time)
+        windows.append(
+            (
+                int(current.astimezone(UTC).timestamp() * 1000),
+                int(next_time.astimezone(UTC).timestamp() * 1000) - 1,
+            )
+        )
+        current = next_time
+    return windows
 
 
 def summarize_channel_records(

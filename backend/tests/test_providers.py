@@ -1524,7 +1524,7 @@ async def test_gate_provider_collects_funding_fee_records(httpx_mock) -> None:
     )
     provider = GateProvider(
         channel_name="Gate",
-        config={},
+        config={"settle": "usdt"},
         secrets={"apiKey": "public", "apiSecret": "secret"},
         now_factory=lambda: "1702600000",
     )
@@ -1533,6 +1533,50 @@ async def test_gate_provider_collects_funding_fee_records(httpx_mock) -> None:
 
     assert [record.amount for record in records] == [Decimal("2"), Decimal("-0.75")]
     assert records[0].symbol == "BTC_USDT"
+
+
+@pytest.mark.asyncio
+async def test_gate_provider_collects_default_usdt_and_btc_funding_fee_records(httpx_mock) -> None:
+    from profits_check_backend.providers.gate import GateProvider
+
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://api.gateio.ws/api/v4/futures/usdt/account_book"
+            "?from=1700000000&to=1702591999&type=fund&limit=1000"
+        ),
+        json=[],
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://api.gateio.ws/api/v4/futures/btc/account_book"
+            "?from=1700000000&to=1702591999&type=fund&limit=1000"
+        ),
+        json=[
+            {
+                "time": 1700000000,
+                "change": "0.0002",
+                "balance": "1.1",
+                "type": "fund",
+                "contract": "BTC_USD",
+                "text": "BTC_USD:1",
+            }
+        ],
+    )
+    provider = GateProvider(
+        channel_name="Gate",
+        config={},
+        secrets={"apiKey": "public", "apiSecret": "secret"},
+        now_factory=lambda: "1702600000",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert len(records) == 1
+    assert records[0].amount == Decimal("0.0002")
+    assert records[0].asset == "BTC"
+    assert records[0].symbol == "BTC_USD"
 
 
 @pytest.mark.asyncio

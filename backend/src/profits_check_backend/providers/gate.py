@@ -139,35 +139,37 @@ class GateProvider(Provider):
         base_url = str(
             self.config.get("baseUrl", self.config.get("base_url", "https://api.gateio.ws/api/v4"))
         ).rstrip("/")
-        settle = str(self.config.get("settle", "usdt")).lower()
-        path = f"/futures/{settle}/account_book"
-        params = {
-            "from": str(start_time_ms // 1000),
-            "to": str(end_time_ms // 1000),
-            "type": "fund",
-            "limit": "1000",
-        }
-        query = "&".join(f"{key}={value}" for key, value in params.items())
-        headers = self._signature_headers("GET", "/api/v4" + path, query=query)
+        records: list[FundingFeeRecord] = []
         async with provider_http_client() as client:
-            response = await client.get(f"{base_url}{path}", headers=headers, params=params)
-            response.raise_for_status()
-            payload = response.json()
-
-        asset = settle.upper()
-        return [
-            FundingFeeRecord(
-                provider="gate",
-                channel_name=self.channel_name,
-                amount=Decimal(str(item.get("change", "0"))),
-                asset=asset,
-                timestamp_ms=int(Decimal(str(item.get("time", "0"))) * Decimal("1000")),
-                symbol=_gate_account_book_symbol(item.get("text")),
-                raw_payload=dict(item),
-            )
-            for item in payload
-            if Decimal(str(item.get("change", "0"))) != 0
-        ]
+            for settle in _gate_funding_fee_settles(self.config):
+                path = f"/futures/{settle}/account_book"
+                params = {
+                    "from": str(start_time_ms // 1000),
+                    "to": str(end_time_ms // 1000),
+                    "type": "fund",
+                    "limit": "1000",
+                }
+                query = "&".join(f"{key}={value}" for key, value in params.items())
+                headers = self._signature_headers("GET", "/api/v4" + path, query=query)
+                response = await client.get(f"{base_url}{path}", headers=headers, params=params)
+                response.raise_for_status()
+                payload = response.json()
+                asset = settle.upper()
+                records.extend(
+                    FundingFeeRecord(
+                        provider="gate",
+                        channel_name=self.channel_name,
+                        amount=Decimal(str(item.get("change", "0"))),
+                        asset=asset,
+                        timestamp_ms=int(Decimal(str(item.get("time", "0"))) * Decimal("1000")),
+                        symbol=str(item.get("contract", ""))
+                        or _gate_account_book_symbol(item.get("text")),
+                        raw_payload=dict(item),
+                    )
+                    for item in payload
+                    if Decimal(str(item.get("change", "0"))) != 0
+                )
+        return records
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         size = Decimal(str(item.get("size", "0")))
@@ -282,6 +284,20 @@ class GateProvider(Provider):
             return quantity * Decimal(str(data[0]["last"]))
         except Exception:
             return None
+
+
+def _gate_funding_fee_settles(config: dict[str, object]) -> list[str]:
+    configured = config.get("settle")
+    if configured:
+        return [str(configured).lower()]
+    configured_list = config.get("settles")
+    if isinstance(configured_list, list):
+        values = [
+            str(item).lower() for item in configured_list if str(item).lower() in {"usdt", "btc"}
+        ]
+        if values:
+            return list(dict.fromkeys(values))
+    return ["usdt", "btc"]
 
 
 def _optional_decimal(value: object) -> Decimal | None:
