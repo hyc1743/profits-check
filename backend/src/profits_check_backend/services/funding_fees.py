@@ -83,13 +83,15 @@ async def collect_monthly_funding_fee_summary(
                 config=decode_public_config(channel),
                 secrets=decode_secret_config(channel, cipher),
             )
-            records: list[FundingFeeRecord] = []
-            for window_start_ms, window_end_ms in funding_fee_query_windows(
-                channel.provider, start_time, end_time
-            ):
-                records.extend(
-                    await provider.collect_funding_fee_records(window_start_ms, window_end_ms)
+            window_records = await asyncio.gather(
+                *(
+                    provider.collect_funding_fee_records(window_start_ms, window_end_ms)
+                    for window_start_ms, window_end_ms in funding_fee_query_windows(
+                        channel.provider, start_time, end_time
+                    )
                 )
+            )
+            records = [record for records in window_records for record in records]
             return summarize_channel_records(channel, records)
         except Exception as exc:
             return FundingFeeChannelSummary(

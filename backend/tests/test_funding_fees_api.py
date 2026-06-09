@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 from profits_check_backend.providers.base import FundingFeeRecord
@@ -148,6 +149,48 @@ def test_funding_fees_api_splits_bybit_month_into_seven_day_windows(client) -> N
         (1709136000000, 1709222399999),
     ]
     assert response.json()["paid"] == "2.50000000"
+
+
+def test_funding_fees_api_queries_split_windows_concurrently(client) -> None:
+    in_flight = 0
+    max_in_flight = 0
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return [
+                FundingFeeRecord(
+                    provider="gate",
+                    channel_name="gate main",
+                    amount=Decimal("1"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "gate main",
+            "provider": "gate",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    response = client.get("/api/funding-fees?month=2024-07")
+
+    assert response.status_code == 200
+    assert max_in_flight > 1
 
 
 def test_funding_fees_api_keeps_other_providers_as_single_month_query(client) -> None:
