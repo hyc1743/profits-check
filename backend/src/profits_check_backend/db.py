@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -57,6 +58,7 @@ def run_alembic_migrations(database_url: str) -> bool:
     config.attributes["configure_logger"] = False
     config.set_main_option("script_location", str(alembic_dir))
     config.set_main_option("sqlalchemy.url", database_url)
+    logging.getLogger("alembic").setLevel(logging.ERROR)
     command.upgrade(config, "head")
     return True
 

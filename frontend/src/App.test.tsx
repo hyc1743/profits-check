@@ -272,6 +272,19 @@ const monthlyFundingFeesPayload = {
   error: null,
 }
 
+const currentMonthFundingFeesPayload = {
+  month: '2026-06',
+  startDate: '2026-06-01',
+  endDate: '2026-06-08',
+  received: '15.50000000',
+  paid: '4.00000000',
+  net: '11.50000000',
+  recordsCount: 9,
+  cachedDays: 8,
+  expectedDays: 8,
+  status: 'success',
+}
+
 test('shows recent seven day funding fee totals', async () => {
   installHandlers()
   const user = userEvent.setup()
@@ -284,6 +297,14 @@ test('shows recent seven day funding fee totals', async () => {
   await user.click(screen.getByRole('button', { name: '资费统计' }))
 
   expect(await screen.findByLabelText('资金费统计')).toBeInTheDocument()
+  expect(await screen.findByText('当月资费')).toBeInTheDocument()
+  expect(screen.getByText('2026-06 · 8/8 天')).toBeInTheDocument()
+  expect(screen.getByText('当月资费收入')).toBeInTheDocument()
+  expect(screen.getAllByText('15.50 USD').length).toBeGreaterThan(0)
+  expect(screen.getByText('当月资费付出')).toBeInTheDocument()
+  expect(screen.getByText('4.00 USD')).toBeInTheDocument()
+  expect(screen.getByText('当月净费')).toBeInTheDocument()
+  expect(screen.getByText('11.50 USD')).toBeInTheDocument()
   expect(await screen.findByText('上月资费')).toBeInTheDocument()
   expect(screen.getByText('2026-05 · 18 条')).toBeInTheDocument()
   expect(screen.getByText('月度资费收入')).toBeInTheDocument()
@@ -299,7 +320,7 @@ test('shows recent seven day funding fee totals', async () => {
   expect(screen.getByText('7 天资金费付出')).toBeInTheDocument()
   expect(screen.getByText('3.75 USD')).toBeInTheDocument()
   expect(screen.getByText('7 天净资金费')).toBeInTheDocument()
-  expect(screen.getByText('15.50 USD')).toBeInTheDocument()
+  expect(screen.getAllByText('15.50 USD').length).toBeGreaterThan(0)
 })
 
 test('shows previous monthly funding fee collection as running', async () => {
@@ -342,6 +363,7 @@ function installHandlers() {
     http.get('/api/liquidation-monitor', () => HttpResponse.json(liquidationMonitorPayload)),
     http.get('/api/funding-fees', () => HttpResponse.json(fundingFeesPayload)),
     http.get('/api/funding-fees/monthly/previous', () => HttpResponse.json(monthlyFundingFeesPayload)),
+    http.get('/api/funding-fees/monthly/current', () => HttpResponse.json(currentMonthFundingFeesPayload)),
     http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(liquidationMonitorPayload)),
     http.post('/api/liquidation-monitor/test-alert', () => HttpResponse.json({ status: 'sent' })),
     http.post('/api/liquidation-monitor/test-alert/miaotixing', () => HttpResponse.json({ status: 'sent' })),

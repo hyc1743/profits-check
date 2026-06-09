@@ -11,6 +11,7 @@ import {
   api,
   type ChannelResponse,
   type CreateChannelPayload,
+  type CurrentMonthFundingFeeSummaryResponse,
   type MonthlyFundingFeeSummaryResponse,
   type FundingFeeSummaryResponse,
   type LiquidationMonitorResponse,
@@ -441,6 +442,11 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     queryFn: api.getPreviousMonthlyFundingFees,
     enabled: showFundingFees,
     refetchInterval: (query) => (query.state.data?.status === 'running' ? 5000 : false),
+  })
+  const currentMonthFundingFeesQuery = useQuery({
+    queryKey: ['funding-fees', 'monthly', 'current'],
+    queryFn: api.getCurrentMonthlyFundingFees,
+    enabled: showFundingFees,
   })
 
   const runSnapshotMutation = useMutation({
@@ -1077,11 +1083,14 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             {showFundingFees ? (
               <FundingFeePanel
                 summary={fundingSummary}
+                currentMonthSummary={currentMonthFundingFeesQuery.data}
                 monthlySummary={monthlyFundingFeesQuery.data}
                 selectedDate={selectedFundingDate}
                 isLoading={fundingFeesQuery.isFetching}
+                isCurrentMonthLoading={currentMonthFundingFeesQuery.isFetching}
                 isMonthlyLoading={monthlyFundingFeesQuery.isFetching}
                 error={fundingFeesQuery.error?.message}
+                currentMonthError={currentMonthFundingFeesQuery.error?.message}
                 monthlyError={monthlyFundingFeesQuery.error?.message}
                 onDateChange={setSelectedFundingDate}
               />
@@ -1724,20 +1733,26 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function FundingFeePanel({
   summary,
+  currentMonthSummary,
   monthlySummary,
   selectedDate,
   isLoading,
+  isCurrentMonthLoading,
   isMonthlyLoading,
   error,
+  currentMonthError,
   monthlyError,
   onDateChange,
 }: {
   summary?: FundingFeeSummaryResponse
+  currentMonthSummary?: CurrentMonthFundingFeeSummaryResponse
   monthlySummary?: MonthlyFundingFeeSummaryResponse
   selectedDate: string
   isLoading: boolean
+  isCurrentMonthLoading: boolean
   isMonthlyLoading: boolean
   error?: string
+  currentMonthError?: string
   monthlyError?: string
   onDateChange: (value: string) => void
 }) {
@@ -1766,6 +1781,24 @@ function FundingFeePanel({
         <Metric label="资金费收取" value={formatUsd(summary?.received ?? '0')} />
         <Metric label="资金费付出" value={formatUsd(summary?.paid ?? '0')} />
         <Metric label="净资金费" value={formatUsd(summary?.net ?? '0')} />
+      </div>
+      <div className="funding-recent-block" aria-label="当月资金费">
+        <div className="asset-totals-head funding-recent-head">
+          <h4>当月资费</h4>
+          <span>
+            {isCurrentMonthLoading
+              ? '统计中'
+              : currentMonthSummary
+                ? `${currentMonthSummary.month} · ${currentMonthSummary.cachedDays}/${currentMonthSummary.expectedDays} 天`
+                : '暂无结算记录'}
+          </span>
+        </div>
+        {currentMonthError ? <p className="form-error">{currentMonthError}</p> : null}
+        <div className="funding-recent-grid">
+          <Metric label="当月资费收入" value={formatUsd(currentMonthSummary?.received ?? '0')} />
+          <Metric label="当月资费付出" value={formatUsd(currentMonthSummary?.paid ?? '0')} />
+          <Metric label="当月净费" value={formatUsd(currentMonthSummary?.net ?? '0')} />
+        </div>
       </div>
       <div className="funding-recent-block" aria-label="上月资金费">
         <div className="asset-totals-head funding-recent-head">

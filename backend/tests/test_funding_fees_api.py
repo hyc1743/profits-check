@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from profits_check_backend.models import Channel, MonthlyFundingFeeSummary
+from profits_check_backend.models import Channel, DailyFundingFeeSummary, MonthlyFundingFeeSummary
 from profits_check_backend.providers.base import FundingFeeRecord
+from profits_check_backend.services.funding_fees import date_bounds_ms
 
 
 def test_funding_fees_api_summarizes_daily_records(client) -> None:
@@ -18,7 +20,7 @@ def test_funding_fees_api_summarizes_daily_records(client) -> None:
         async def collect_funding_fee_records(
             self, start_time_ms: int, end_time_ms: int
         ) -> list[FundingFeeRecord]:
-            assert start_time_ms == 1719244800000
+            assert start_time_ms == 1719763200000
             assert end_time_ms == 1719849599999
             return [
                 FundingFeeRecord(
@@ -72,13 +74,6 @@ def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
                 FundingFeeRecord(
                     provider="binance",
                     channel_name="binance main",
-                    amount=Decimal("1.5"),
-                    asset="USDT",
-                    timestamp_ms=1719763200000,
-                ),
-                FundingFeeRecord(
-                    provider="binance",
-                    channel_name="binance main",
                     amount=Decimal("-0.75"),
                     asset="USDT",
                     timestamp_ms=1720281600000,
@@ -97,11 +92,26 @@ def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
         },
     )
     assert response.status_code == 201
+    start_time, end_time, _, _ = date_bounds_ms("2024-07-01")
+    with client.app.state.session_factory() as session:
+        session.add(
+            DailyFundingFeeSummary(
+                date="2024-07-01",
+                start_time=start_time,
+                end_time=end_time,
+                received=Decimal("1.5"),
+                paid=Decimal("0"),
+                net=Decimal("1.5"),
+                records_count=1,
+                status="success",
+            )
+        )
+        session.commit()
 
     response = client.get("/api/funding-fees?date=2024-07-07")
 
     assert response.status_code == 200
-    assert calls == [(1719763200000, 1720367999999)]
+    assert calls == [(1720281600000, 1720367999999)]
     payload = response.json()
     assert payload["received"] == "0.00000000"
     assert payload["paid"] == "0.75000000"
@@ -113,6 +123,53 @@ def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
         "paid": "0.75000000",
         "net": "0.75000000",
         "recordsCount": 2,
+    }
+
+
+def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) -> None:
+    def daily_summary(
+        *, date: str, received: str, paid: str, net: str, records_count: int
+    ) -> DailyFundingFeeSummary:
+        start_time, end_time, _, _ = date_bounds_ms(date)
+        return DailyFundingFeeSummary(
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            received=Decimal(received),
+            paid=Decimal(paid),
+            net=Decimal(net),
+            records_count=records_count,
+            status="success",
+        )
+
+    with client.app.state.session_factory() as session:
+        session.add_all(
+            [
+                daily_summary(date="2024-07-01", received="1", paid="0", net="1", records_count=1),
+                daily_summary(date="2024-07-02", received="2", paid="0.5", net="1.5", records_count=2),
+                daily_summary(date="2024-07-07", received="4", paid="1", net="3", records_count=3),
+            ]
+        )
+        session.commit()
+
+    def fail_provider_builder(**_):
+        raise AssertionError("provider should not be called for cached funding fees")
+
+    client.app.state.provider_builder = fail_provider_builder
+    response = client.get("/api/funding-fees?date=2024-07-07")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["received"] == "4.00000000"
+    assert payload["paid"] == "1.00000000"
+    assert payload["net"] == "3.00000000"
+    assert payload["recentSevenDays"] == {
+        "startDate": "2024-07-01",
+        "endDate": "2024-07-07",
+        "received": "7.00000000",
+        "paid": "1.50000000",
+        "net": "5.50000000",
+        "recordsCount": 6,
     }
 
 
@@ -279,6 +336,59 @@ def test_previous_monthly_funding_fees_api_reports_running_summary(client) -> No
     }
 
 
+def test_current_monthly_funding_fees_collects_missing_days_once(client) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=Decimal("1"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    response = client.get("/api/funding-fees/monthly/current")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["month"] == datetime.now(UTC).astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
+    assert payload["cachedDays"] == payload["expectedDays"]
+    assert len(calls) == payload["expectedDays"]
+
+    response = client.get("/api/funding-fees/monthly/current")
+
+    assert response.status_code == 200
+    assert len(calls) == payload["expectedDays"]
+
+
+def test_daily_funding_fee_increment_job_is_scheduled(client) -> None:
+    jobs = {job.id: str(job.trigger) for job in client.app.state.scheduler.get_jobs()}
+
+    assert "daily-funding-fee-increment" in jobs
+    assert "hour='8'" in jobs["daily-funding-fee-increment"]
+    assert "minute='5'" in jobs["daily-funding-fee-increment"]
+
+
 def test_funding_fees_api_rejects_invalid_date(client) -> None:
     response = client.get("/api/funding-fees?date=2024-02-30")
 
@@ -319,7 +429,7 @@ def test_funding_fees_api_queries_gate_recent_window_once(client) -> None:
     response = client.get("/api/funding-fees?date=2024-07-01")
 
     assert response.status_code == 200
-    assert calls == [(1719244800000, 1719849599999)]
+    assert calls == [(1719763200000, 1719849599999)]
     assert response.json()["received"] == "1.00000000"
 
 
@@ -357,7 +467,7 @@ def test_funding_fees_api_queries_bybit_recent_window_once(client) -> None:
     response = client.get("/api/funding-fees?date=2024-02-29")
 
     assert response.status_code == 200
-    assert calls == [(1708617600000, 1709222399999)]
+    assert calls == [(1709136000000, 1709222399999)]
     assert response.json()["paid"] == "0.50000000"
 
 
@@ -387,4 +497,4 @@ def test_funding_fees_api_queries_other_providers_by_date(client) -> None:
     response = client.get("/api/funding-fees?date=2024-07-01")
 
     assert response.status_code == 200
-    assert calls == [(1719244800000, 1719849599999)]
+    assert calls == [(1719763200000, 1719849599999)]

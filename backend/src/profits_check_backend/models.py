@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -108,6 +117,52 @@ class MonthlyFundingFeeSummary(Base):
         default=utc_now,
         onupdate=utc_now,
     )
+
+
+class DailyFundingFeeSummary(Base):
+    __tablename__ = "daily_funding_fee_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[str] = mapped_column(String(10), unique=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    paid: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    net: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    records_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+    channels: Mapped[list[DailyFundingFeeChannelSummary]] = relationship(
+        back_populates="daily_summary",
+        cascade="all, delete-orphan",
+    )
+
+
+class DailyFundingFeeChannelSummary(Base):
+    __tablename__ = "daily_funding_fee_channel_summaries"
+    __table_args__ = (
+        UniqueConstraint("daily_summary_id", "channel_id", name="uq_daily_funding_channel"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    daily_summary_id: Mapped[int] = mapped_column(ForeignKey("daily_funding_fee_summaries.id"))
+    channel_id: Mapped[int] = mapped_column(Integer)
+    channel_name: Mapped[str] = mapped_column(String(120))
+    provider: Mapped[str] = mapped_column(String(32))
+    received: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    paid: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    net: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    records_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    daily_summary: Mapped[DailyFundingFeeSummary] = relationship(back_populates="channels")
 
 
 class AppSetting(Base):

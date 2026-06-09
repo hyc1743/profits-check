@@ -274,6 +274,19 @@ export interface MonthlyFundingFeeSummaryResponse {
   error?: string | null
 }
 
+export interface CurrentMonthFundingFeeSummaryResponse {
+  month: string
+  startDate: string
+  endDate: string
+  received: string
+  paid: string
+  net: string
+  recordsCount: number
+  cachedDays: number
+  expectedDays: number
+  status: string
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: 'include',
@@ -318,6 +331,8 @@ export const api = {
     requestJson<FundingFeeSummaryResponse>(`/api/funding-fees?date=${encodeURIComponent(date)}`),
   getPreviousMonthlyFundingFees: () =>
     requestJson<MonthlyFundingFeeSummaryResponse>('/api/funding-fees/monthly/previous'),
+  getCurrentMonthlyFundingFees: () =>
+    requestJson<CurrentMonthFundingFeeSummaryResponse>('/api/funding-fees/monthly/current'),
   updatePortfolioInclusionRules: (payload: UpdatePortfolioInclusionRulesPayload) =>
     requestJson<UpdatePortfolioInclusionRulesPayload>('/api/portfolio-inclusion-rules', {
       method: 'PUT',

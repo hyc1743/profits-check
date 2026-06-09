@@ -13,7 +13,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from profits_check_backend.models import Channel, MonthlyFundingFeeSummary
+from profits_check_backend.models import (
+    Channel,
+    DailyFundingFeeChannelSummary,
+    DailyFundingFeeSummary,
+    MonthlyFundingFeeSummary,
+)
 from profits_check_backend.providers.base import FundingFeeRecord, Provider
 from profits_check_backend.security import SecretCipher
 from profits_check_backend.services.channels import decode_public_config, decode_secret_config
@@ -66,6 +71,20 @@ class FundingFeeSummary:
 
 
 @dataclass(slots=True)
+class CurrentMonthFundingFeeSummary:
+    month: str
+    start_date: str
+    end_date: str
+    received: Decimal
+    paid: Decimal
+    net: Decimal
+    records_count: int
+    cached_days: int
+    expected_days: int
+    status: str
+
+
+@dataclass(slots=True)
 class MonthlyFundingFeeCollection:
     records: list[FundingFeeRecord]
     error: str | None = None
@@ -97,6 +116,30 @@ def previous_month_period(now: datetime | None = None) -> tuple[str, str, str]:
     return month, previous_month_start.isoformat(), previous_month_end.isoformat()
 
 
+def current_month_completed_period(now: datetime | None = None) -> tuple[str, str, str | None]:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current_local = current.astimezone(DATE_TIMEZONE)
+    month_start = date_type(current_local.year, current_local.month, 1)
+    end = current_local.date() - timedelta(days=1)
+    month = f"{month_start.year:04d}-{month_start.month:02d}"
+    if end < month_start:
+        return month, month_start.isoformat(), None
+    return month, month_start.isoformat(), end.isoformat()
+
+
+def date_range(start_date: str, end_date: str) -> list[str]:
+    start = date_type.fromisoformat(start_date)
+    end = date_type.fromisoformat(end_date)
+    days: list[str] = []
+    current = start
+    while current <= end:
+        days.append(current.isoformat())
+        current += timedelta(days=1)
+    return days
+
+
 def iter_date_segments(
     start_date: str, end_date: str, *, max_days: int = 7
 ) -> list[tuple[str, str, int, int]]:
@@ -124,8 +167,7 @@ async def collect_daily_funding_fee_summary(
     selected_start_time, selected_end_time, selected_start_ms, selected_end_ms = date_bounds_ms(
         date
     )
-    range_start_time = selected_start_time - timedelta(days=6)
-    start_ms = int(range_start_time.astimezone(UTC).timestamp() * 1000)
+    start_ms = selected_start_ms
     end_ms = selected_end_ms
     logger.info(
         "funding_fees.start date=%s channels=%s start_ms=%s end_ms=%s",
@@ -214,15 +256,13 @@ async def collect_daily_funding_fee_summary(
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
     net = sum((item.net for item in channel_summaries), Decimal("0"))
     records_count = sum(item.records_count for item in channel_summaries)
-    recent_seven_days = summarize_period_records(
-        [
-            record
-            for collection in channel_collections
-            for record in collection.records
-            if start_ms <= record.timestamp_ms <= end_ms
-        ],
-        start_date=range_start_time.date().isoformat(),
+    recent_seven_days = FundingFeePeriodSummary(
+        start_date=date,
         end_date=date,
+        received=received,
+        paid=paid,
+        net=net,
+        records_count=records_count,
     )
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     failed_count = sum(1 for item in channel_summaries if item.status == "failed")
@@ -245,6 +285,236 @@ async def collect_daily_funding_fee_summary(
         channels=channel_summaries,
         recent_seven_days=recent_seven_days,
     )
+
+
+def funding_fee_summary_from_daily_model(
+    summary: DailyFundingFeeSummary,
+    *,
+    recent_seven_days: FundingFeePeriodSummary | None = None,
+) -> FundingFeeSummary:
+    daily_recent = recent_seven_days or FundingFeePeriodSummary(
+        start_date=summary.date,
+        end_date=summary.date,
+        received=summary.received,
+        paid=summary.paid,
+        net=summary.net,
+        records_count=summary.records_count,
+    )
+    return FundingFeeSummary(
+        date=summary.date,
+        start_time=summary.start_time,
+        end_time=summary.end_time,
+        received=summary.received,
+        paid=summary.paid,
+        net=summary.net,
+        records_count=summary.records_count,
+        channels=[
+            FundingFeeChannelSummary(
+                channel_id=item.channel_id,
+                channel_name=item.channel_name,
+                provider=item.provider,
+                received=item.received,
+                paid=item.paid,
+                net=item.net,
+                records_count=item.records_count,
+                status=item.status,
+                error=item.error,
+            )
+            for item in summary.channels
+        ],
+        recent_seven_days=daily_recent,
+    )
+
+
+def save_daily_funding_fee_summary(
+    session: Session,
+    summary: FundingFeeSummary,
+) -> DailyFundingFeeSummary:
+    existing = session.scalar(
+        select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == summary.date)
+    )
+    if existing is not None:
+        return existing
+    failed_errors = [item.error for item in summary.channels if item.error]
+    model = DailyFundingFeeSummary(
+        date=summary.date,
+        start_time=summary.start_time,
+        end_time=summary.end_time,
+        received=_quantize_decimal(summary.received),
+        paid=_quantize_decimal(summary.paid),
+        net=_quantize_decimal(summary.net),
+        records_count=summary.records_count,
+        status="failed" if failed_errors else "success",
+        error="; ".join(failed_errors) if failed_errors else None,
+    )
+    model.channels = [
+        DailyFundingFeeChannelSummary(
+            channel_id=item.channel_id,
+            channel_name=item.channel_name,
+            provider=item.provider,
+            received=_quantize_decimal(item.received),
+            paid=_quantize_decimal(item.paid),
+            net=_quantize_decimal(item.net),
+            records_count=item.records_count,
+            status=item.status,
+            error=item.error,
+        )
+        for item in summary.channels
+    ]
+    session.add(model)
+    session.flush()
+    return model
+
+
+def get_daily_funding_fee_summary(
+    session: Session,
+    date: str,
+) -> DailyFundingFeeSummary | None:
+    if not DATE_PATTERN.match(date):
+        raise ValueError("date must use YYYY-MM-DD")
+    return session.scalar(select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date))
+
+
+def summarize_daily_models(
+    summaries: list[DailyFundingFeeSummary], *, start_date: str, end_date: str
+) -> FundingFeePeriodSummary:
+    return FundingFeePeriodSummary(
+        start_date=start_date,
+        end_date=end_date,
+        received=sum((item.received for item in summaries), Decimal("0")),
+        paid=sum((item.paid for item in summaries), Decimal("0")),
+        net=sum((item.net for item in summaries), Decimal("0")),
+        records_count=sum(item.records_count for item in summaries),
+    )
+
+
+def recent_seven_day_summary_from_database(
+    session: Session,
+    date: str,
+) -> FundingFeePeriodSummary:
+    selected_start_time, _, _, _ = date_bounds_ms(date)
+    start_date = (selected_start_time - timedelta(days=6)).date().isoformat()
+    summaries = list(
+        session.scalars(
+            select(DailyFundingFeeSummary)
+            .where(DailyFundingFeeSummary.date >= start_date)
+            .where(DailyFundingFeeSummary.date <= date)
+            .order_by(DailyFundingFeeSummary.date)
+        )
+    )
+    return summarize_daily_models(summaries, start_date=start_date, end_date=date)
+
+
+def ensure_daily_funding_fee_summary(
+    *,
+    session: Session,
+    date: str,
+    channels: list[Channel],
+    cipher: SecretCipher,
+    provider_builder,
+) -> DailyFundingFeeSummary:
+    existing = get_daily_funding_fee_summary(session, date)
+    if existing is not None:
+        return existing
+    summary = asyncio.run(
+        collect_daily_funding_fee_summary(
+            date=date,
+            channels=channels,
+            cipher=cipher,
+            provider_builder=provider_builder,
+        )
+    )
+    return save_daily_funding_fee_summary(session, summary)
+
+
+def ensure_daily_funding_fee_summaries(
+    *,
+    session: Session,
+    start_date: str,
+    end_date: str,
+    channels: list[Channel],
+    cipher: SecretCipher,
+    provider_builder,
+) -> list[DailyFundingFeeSummary]:
+    summaries: list[DailyFundingFeeSummary] = []
+    for date in date_range(start_date, end_date):
+        summaries.append(
+            ensure_daily_funding_fee_summary(
+                session=session,
+                date=date,
+                channels=channels,
+                cipher=cipher,
+                provider_builder=provider_builder,
+            )
+        )
+    return summaries
+
+
+def current_month_funding_fee_summary_from_database(
+    session: Session,
+    *,
+    now_factory=None,
+) -> CurrentMonthFundingFeeSummary:
+    now = now_factory() if now_factory else datetime.now(UTC)
+    month, start_date, end_date = current_month_completed_period(now)
+    if end_date is None:
+        return CurrentMonthFundingFeeSummary(
+            month=month,
+            start_date=start_date,
+            end_date=start_date,
+            received=Decimal("0"),
+            paid=Decimal("0"),
+            net=Decimal("0"),
+            records_count=0,
+            cached_days=0,
+            expected_days=0,
+            status="success",
+        )
+    summaries = list(
+        session.scalars(
+            select(DailyFundingFeeSummary)
+            .where(DailyFundingFeeSummary.date >= start_date)
+            .where(DailyFundingFeeSummary.date <= end_date)
+            .order_by(DailyFundingFeeSummary.date)
+        )
+    )
+    period = summarize_daily_models(summaries, start_date=start_date, end_date=end_date)
+    expected_days = len(date_range(start_date, end_date))
+    failed = any(item.status == "failed" for item in summaries)
+    return CurrentMonthFundingFeeSummary(
+        month=month,
+        start_date=start_date,
+        end_date=end_date,
+        received=period.received,
+        paid=period.paid,
+        net=period.net,
+        records_count=period.records_count,
+        cached_days=len(summaries),
+        expected_days=expected_days,
+        status="failed" if failed else "success",
+    )
+
+
+def ensure_current_month_funding_fee_summaries(
+    *,
+    session: Session,
+    channels: list[Channel],
+    cipher: SecretCipher,
+    provider_builder,
+    now_factory=None,
+) -> CurrentMonthFundingFeeSummary:
+    now = now_factory() if now_factory else datetime.now(UTC)
+    _, start_date, end_date = current_month_completed_period(now)
+    if end_date is not None:
+        ensure_daily_funding_fee_summaries(
+            session=session,
+            start_date=start_date,
+            end_date=end_date,
+            channels=channels,
+            cipher=cipher,
+            provider_builder=provider_builder,
+        )
+    return current_month_funding_fee_summary_from_database(session, now_factory=lambda: now)
 
 
 async def collect_monthly_funding_fee_records(
@@ -402,6 +672,23 @@ def monthly_funding_fee_summary_payload(summary: MonthlyFundingFeeSummary) -> di
         "recordsCount": summary.records_count,
         "status": summary.status,
         "error": summary.error,
+    }
+
+
+def current_month_funding_fee_summary_payload(
+    summary: CurrentMonthFundingFeeSummary,
+) -> dict[str, object]:
+    return {
+        "month": summary.month,
+        "startDate": summary.start_date,
+        "endDate": summary.end_date,
+        "received": _decimal_text(summary.received),
+        "paid": _decimal_text(summary.paid),
+        "net": _decimal_text(summary.net),
+        "recordsCount": summary.records_count,
+        "cachedDays": summary.cached_days,
+        "expectedDays": summary.expected_days,
+        "status": summary.status,
     }
 
 
