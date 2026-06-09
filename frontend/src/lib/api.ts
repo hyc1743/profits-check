@@ -262,6 +262,18 @@ export interface FundingFeeSummaryResponse {
   channels: FundingFeeChannelSummary[]
 }
 
+export interface MonthlyFundingFeeSummaryResponse {
+  month: string
+  startDate: string
+  endDate: string
+  received: string
+  paid: string
+  net: string
+  recordsCount: number
+  status: string
+  error?: string | null
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: 'include',
@@ -304,6 +316,8 @@ export const api = {
   getLiveSummary: () => requestJson<SummaryResponse>('/api/summary/live'),
   getFundingFees: (date: string) =>
     requestJson<FundingFeeSummaryResponse>(`/api/funding-fees?date=${encodeURIComponent(date)}`),
+  getPreviousMonthlyFundingFees: () =>
+    requestJson<MonthlyFundingFeeSummaryResponse>('/api/funding-fees/monthly/previous'),
   updatePortfolioInclusionRules: (payload: UpdatePortfolioInclusionRulesPayload) =>
     requestJson<UpdatePortfolioInclusionRulesPayload>('/api/portfolio-inclusion-rules', {
       method: 'PUT',

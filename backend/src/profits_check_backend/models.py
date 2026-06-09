@@ -89,6 +89,27 @@ class PortfolioInclusionRule(Base):
     )
 
 
+class MonthlyFundingFeeSummary(Base):
+    __tablename__ = "monthly_funding_fee_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    month: Mapped[str] = mapped_column(String(7), unique=True)
+    start_date: Mapped[str] = mapped_column(String(10))
+    end_date: Mapped[str] = mapped_column(String(10))
+    received: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    paid: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    net: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    records_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="success")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

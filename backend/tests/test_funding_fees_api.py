@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
+from sqlalchemy import select
+
+from profits_check_backend.models import Channel, MonthlyFundingFeeSummary
 from profits_check_backend.providers.base import FundingFeeRecord
 
 
@@ -109,6 +113,134 @@ def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
         "paid": "0.75000000",
         "net": "0.75000000",
         "recordsCount": 2,
+    }
+
+
+def test_monthly_funding_fee_summary_collects_previous_month_in_seven_day_segments(
+    client,
+) -> None:
+    from profits_check_backend.services.funding_fees import (
+        ensure_previous_month_funding_fee_summary,
+    )
+
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            amount = Decimal("2") if len(calls) % 2 else Decimal("-0.5")
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=amount,
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    with client.app.state.session_factory() as session:
+        channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+        summary = ensure_previous_month_funding_fee_summary(
+            session=session,
+            channels=channels,
+            cipher=client.app.state.cipher,
+            provider_builder=lambda **_: StubProvider(),
+            now_factory=lambda: datetime(2026, 6, 9, 8, tzinfo=UTC),
+        )
+        summary_id = summary.id
+        summary_values = {
+            "month": summary.month,
+            "start_date": summary.start_date,
+            "end_date": summary.end_date,
+            "received": summary.received,
+            "paid": summary.paid,
+            "net": summary.net,
+            "records_count": summary.records_count,
+        }
+        session.commit()
+
+    assert summary_values == {
+        "month": "2026-05",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-31",
+        "received": Decimal("6.00000000"),
+        "paid": Decimal("1.00000000"),
+        "net": Decimal("5.00000000"),
+        "records_count": 5,
+    }
+    assert len(calls) == 5
+    assert all(end - start <= (7 * 24 * 60 * 60 * 1000) - 1 for start, end in calls)
+
+    with client.app.state.session_factory() as session:
+        channels = list(session.scalars(select(Channel).where(Channel.enabled.is_(True))))
+        cached = ensure_previous_month_funding_fee_summary(
+            session=session,
+            channels=channels,
+            cipher=client.app.state.cipher,
+            provider_builder=lambda **_: StubProvider(),
+            now_factory=lambda: datetime(2026, 6, 9, 8, tzinfo=UTC),
+        )
+
+    assert cached.id == summary_id
+    assert len(calls) == 5
+
+    with client.app.state.session_factory() as session:
+        persisted = session.scalar(
+            select(MonthlyFundingFeeSummary).where(
+                MonthlyFundingFeeSummary.month == "2026-05"
+            )
+        )
+        assert persisted is not None
+        assert persisted.net == Decimal("5.00000000")
+
+
+def test_previous_monthly_funding_fees_api_reads_persisted_summary(client) -> None:
+    from profits_check_backend.services.funding_fees import previous_month_period
+
+    month, start_date, end_date = previous_month_period()
+    with client.app.state.session_factory() as session:
+        session.add(
+            MonthlyFundingFeeSummary(
+                month=month,
+                start_date=start_date,
+                end_date=end_date,
+                received=Decimal("11.25"),
+                paid=Decimal("2.00"),
+                net=Decimal("9.25"),
+                records_count=4,
+                status="success",
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/funding-fees/monthly/previous")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "month": month,
+        "startDate": start_date,
+        "endDate": end_date,
+        "received": "11.25000000",
+        "paid": "2.00000000",
+        "net": "9.25000000",
+        "recordsCount": 4,
+        "status": "success",
+        "error": None,
     }
 
 

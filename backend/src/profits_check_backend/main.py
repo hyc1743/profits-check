@@ -22,7 +22,13 @@ from sqlalchemy.orm import Session
 
 from profits_check_backend.config import AppSettings, get_settings
 from profits_check_backend.db import build_session_factory, init_database
-from profits_check_backend.models import AppSetting, Channel, Snapshot, SnapshotAsset
+from profits_check_backend.models import (
+    AppSetting,
+    Channel,
+    MonthlyFundingFeeSummary,
+    Snapshot,
+    SnapshotAsset,
+)
 from profits_check_backend.providers.onchain import collect_supported_evm_chains
 from profits_check_backend.providers.registry import build_provider
 from profits_check_backend.security import (
@@ -47,7 +53,10 @@ from profits_check_backend.services.channels import (
 )
 from profits_check_backend.services.funding_fees import (
     collect_daily_funding_fee_summary,
+    ensure_previous_month_funding_fee_summary,
     funding_fee_summary_payload,
+    monthly_funding_fee_summary_payload,
+    previous_month_period,
 )
 from profits_check_backend.services.liquidation_monitor import (
     get_liquidation_monitor_payload,
@@ -270,14 +279,14 @@ class PortfolioInclusionRulesPayload(BaseModel):
 
 def configure_application_logging() -> None:
     app_logger = logging.getLogger("profits_check")
+    app_logger.setLevel(logging.ERROR)
+    app_logger.propagate = False
     if any(handler.name == "profits_check.stderr" for handler in app_logger.handlers):
         return
     handler = logging.StreamHandler()
     handler.name = "profits_check.stderr"
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     app_logger.addHandler(handler)
-    app_logger.setLevel(logging.INFO)
-    app_logger.propagate = False
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -292,6 +301,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     live_summary_lock = threading.Lock()
     channel_test_lock = threading.Lock()
     liquidation_monitor_lock = threading.Lock()
+    monthly_funding_fee_lock = threading.Lock()
 
     def get_schedule_times(session: Session) -> str:
         return json.loads(
@@ -373,6 +383,31 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             finally:
                 liquidation_monitor_lock.release()
 
+    def run_previous_month_funding_fee_summary() -> None:
+        if not monthly_funding_fee_lock.acquire(blocking=False):
+            return
+        with session_factory() as session:
+            try:
+                channels = list(
+                    session.scalars(
+                        select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
+                    )
+                )
+                if not channels:
+                    return
+                ensure_previous_month_funding_fee_summary(
+                    session=session,
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
+                session.commit()
+            except Exception:
+                session.rollback()
+                logger.exception("api.monthly_funding_fees.startup_failed")
+            finally:
+                monthly_funding_fee_lock.release()
+
     def scheduled_jobs_payload() -> list[dict[str, str]]:
         return [{"id": job.id, "trigger": str(job.trigger)} for job in scheduler.get_jobs()]
 
@@ -433,6 +468,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         app.state.live_summary_lock = live_summary_lock
         app.state.channel_test_lock = channel_test_lock
         app.state.liquidation_monitor_lock = liquidation_monitor_lock
+        app.state.monthly_funding_fee_lock = monthly_funding_fee_lock
         with session_factory() as session:
             ensure_admin_password(session, app_settings)
             configure_scheduler(get_scheduler_enabled(session), get_schedule_times(session))
@@ -440,6 +476,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 load_liquidation_monitor_config(session, cipher)
             )
         scheduler.start()
+        threading.Thread(target=run_previous_month_funding_fee_summary, daemon=True).start()
         yield
         scheduler.shutdown(wait=False)
 
@@ -861,6 +898,39 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             duration_ms,
         )
         return funding_fee_summary_payload(summary)
+
+    @app.get("/api/funding-fees/monthly/previous")
+    def previous_monthly_funding_fees(
+        _: object = Depends(require_session),
+        session: Session = Depends(get_session),
+    ):
+        month, _, _ = previous_month_period()
+        summary = session.scalar(
+            select(MonthlyFundingFeeSummary).where(MonthlyFundingFeeSummary.month == month)
+        )
+        if summary is None:
+            channels = list(
+                session.scalars(
+                    select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
+                )
+            )
+            if not channels:
+                raise HTTPException(status_code=404, detail="Monthly funding fee summary not found")
+            if not app.state.monthly_funding_fee_lock.acquire(blocking=False):
+                raise HTTPException(
+                    status_code=409, detail="Monthly funding fee summary is already running"
+                )
+            try:
+                summary = ensure_previous_month_funding_fee_summary(
+                    session=session,
+                    channels=channels,
+                    cipher=cipher,
+                    provider_builder=app.state.provider_builder,
+                )
+                session.commit()
+            finally:
+                app.state.monthly_funding_fee_lock.release()
+        return monthly_funding_fee_summary_payload(summary)
 
     @app.put("/api/portfolio-inclusion-rules")
     def put_portfolio_inclusion_rules(

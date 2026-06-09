@@ -260,12 +260,39 @@ const fundingFeesPayload = {
   ],
 }
 
+const monthlyFundingFeesPayload = {
+  month: '2026-05',
+  startDate: '2026-05-01',
+  endDate: '2026-05-31',
+  received: '42.50000000',
+  paid: '8.25000000',
+  net: '34.25000000',
+  recordsCount: 18,
+  status: 'success',
+  error: null,
+}
+
 test('shows recent seven day funding fee totals', async () => {
   installHandlers()
+  const user = userEvent.setup()
 
   render(<App />)
 
-  expect(await screen.findByText('最近 7 天')).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '资费统计' })).toBeInTheDocument()
+  expect(screen.queryByLabelText('资金费统计')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '资费统计' }))
+
+  expect(await screen.findByLabelText('资金费统计')).toBeInTheDocument()
+  expect(await screen.findByText('上月资费')).toBeInTheDocument()
+  expect(screen.getByText('2026-05 · 18 条')).toBeInTheDocument()
+  expect(screen.getByText('月度资费收入')).toBeInTheDocument()
+  expect(screen.getByText('42.50 USD')).toBeInTheDocument()
+  expect(screen.getByText('月度资费付出')).toBeInTheDocument()
+  expect(screen.getByText('8.25 USD')).toBeInTheDocument()
+  expect(screen.getByText('月度净费')).toBeInTheDocument()
+  expect(screen.getByText('34.25 USD')).toBeInTheDocument()
+  expect(screen.getByText('最近 7 天')).toBeInTheDocument()
   expect(await screen.findByText('2026-06-03 至 2026-06-09 · 7 条')).toBeInTheDocument()
   expect(screen.getByText('7 天资金费收取')).toBeInTheDocument()
   expect(screen.getByText('19.25 USD')).toBeInTheDocument()
@@ -290,6 +317,7 @@ function installHandlers() {
     http.get('/api/system/scheduler', () => HttpResponse.json(schedulerPayload)),
     http.get('/api/liquidation-monitor', () => HttpResponse.json(liquidationMonitorPayload)),
     http.get('/api/funding-fees', () => HttpResponse.json(fundingFeesPayload)),
+    http.get('/api/funding-fees/monthly/previous', () => HttpResponse.json(monthlyFundingFeesPayload)),
     http.post('/api/liquidation-monitor/refresh', () => HttpResponse.json(liquidationMonitorPayload)),
     http.post('/api/liquidation-monitor/test-alert', () => HttpResponse.json({ status: 'sent' })),
     http.post('/api/liquidation-monitor/test-alert/miaotixing', () => HttpResponse.json({ status: 'sent' })),

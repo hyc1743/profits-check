@@ -191,6 +191,9 @@ def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
                 "127.0.0.1",
                 "--port",
                 "8200",
+                "--log-level",
+                "error",
+                "--no-access-log",
             ],
             run_dev.BACKEND_DIR,
         )

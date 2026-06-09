@@ -11,6 +11,7 @@ import {
   api,
   type ChannelResponse,
   type CreateChannelPayload,
+  type MonthlyFundingFeeSummaryResponse,
   type FundingFeeSummaryResponse,
   type LiquidationMonitorResponse,
   type OnchainChainOption,
@@ -403,6 +404,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [showSnapshotEditor, setShowSnapshotEditor] = useState(false)
   const [showAssetCalendar, setShowAssetCalendar] = useState(false)
   const [showProfitCalendar, setShowProfitCalendar] = useState(false)
+  const [showFundingFees, setShowFundingFees] = useState(false)
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
   const [selectedFundingDate, setSelectedFundingDate] = useState(getCurrentDateKey)
@@ -432,6 +434,12 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const fundingFeesQuery = useQuery({
     queryKey: ['funding-fees', selectedFundingDate],
     queryFn: () => api.getFundingFees(selectedFundingDate),
+    enabled: showFundingFees,
+  })
+  const monthlyFundingFeesQuery = useQuery({
+    queryKey: ['funding-fees', 'monthly', 'previous'],
+    queryFn: api.getPreviousMonthlyFundingFees,
+    enabled: showFundingFees,
   })
 
   const runSnapshotMutation = useMutation({
@@ -926,6 +934,14 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             >
               利润查看
             </button>
+            <button
+              type="button"
+              className="button button-ghost"
+              aria-expanded={showFundingFees}
+              onClick={() => setShowFundingFees((current) => !current)}
+            >
+              资费统计
+            </button>
             {showAssetCalendar ? (
               <div className="calendar-panel" aria-label="资产日历">
                 {calendarDays.length > 0 ? (
@@ -1057,13 +1073,18 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                 )}
               </div>
             ) : null}
-            <FundingFeePanel
-              summary={fundingSummary}
-              selectedDate={selectedFundingDate}
-              isLoading={fundingFeesQuery.isFetching}
-              error={fundingFeesQuery.error?.message}
-              onDateChange={setSelectedFundingDate}
-            />
+            {showFundingFees ? (
+              <FundingFeePanel
+                summary={fundingSummary}
+                monthlySummary={monthlyFundingFeesQuery.data}
+                selectedDate={selectedFundingDate}
+                isLoading={fundingFeesQuery.isFetching}
+                isMonthlyLoading={monthlyFundingFeesQuery.isFetching}
+                error={fundingFeesQuery.error?.message}
+                monthlyError={monthlyFundingFeesQuery.error?.message}
+                onDateChange={setSelectedFundingDate}
+              />
+            ) : null}
             {showSnapshotEditor ? (
               <div className="snapshot-list" aria-label="保存的快照">
                 {snapshotRuns.length === 0 ? (
@@ -1702,15 +1723,21 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function FundingFeePanel({
   summary,
+  monthlySummary,
   selectedDate,
   isLoading,
+  isMonthlyLoading,
   error,
+  monthlyError,
   onDateChange,
 }: {
   summary?: FundingFeeSummaryResponse
+  monthlySummary?: MonthlyFundingFeeSummaryResponse
   selectedDate: string
   isLoading: boolean
+  isMonthlyLoading: boolean
   error?: string
+  monthlyError?: string
   onDateChange: (value: string) => void
 }) {
   const channels = summary?.channels ?? []
@@ -1737,6 +1764,24 @@ function FundingFeePanel({
         <Metric label="资金费收取" value={formatUsd(summary?.received ?? '0')} />
         <Metric label="资金费付出" value={formatUsd(summary?.paid ?? '0')} />
         <Metric label="净资金费" value={formatUsd(summary?.net ?? '0')} />
+      </div>
+      <div className="funding-recent-block" aria-label="上月资金费">
+        <div className="asset-totals-head funding-recent-head">
+          <h4>上月资费</h4>
+          <span>
+            {isMonthlyLoading
+              ? '统计中'
+              : monthlySummary
+                ? `${monthlySummary.month} · ${monthlySummary.recordsCount} 条`
+                : '暂无结算记录'}
+          </span>
+        </div>
+        {monthlyError ? <p className="form-error">{monthlyError}</p> : null}
+        <div className="funding-recent-grid">
+          <Metric label="月度资费收入" value={formatUsd(monthlySummary?.received ?? '0')} />
+          <Metric label="月度资费付出" value={formatUsd(monthlySummary?.paid ?? '0')} />
+          <Metric label="月度净费" value={formatUsd(monthlySummary?.net ?? '0')} />
+        </div>
       </div>
       <div className="funding-recent-block" aria-label="最近 7 天资金费">
         <div className="asset-totals-head funding-recent-head">

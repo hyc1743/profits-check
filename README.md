@@ -99,7 +99,7 @@ nginx -t && systemctl reload nginx
 cd backend
 uv sync
 uv run alembic upgrade head
-uv run uvicorn profits_check_backend.main:create_app --factory --host 127.0.0.1 --port 8200
+uv run uvicorn profits_check_backend.main:create_app --factory --host 127.0.0.1 --port 8200 --log-level error --no-access-log
 ```
 
 前端构建：
