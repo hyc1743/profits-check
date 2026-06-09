@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from alembic import command
 from profits_check_backend.config import AppSettings, get_database_url
 from profits_check_backend.models import Base
 
@@ -38,7 +40,25 @@ def build_session_factory(settings: AppSettings) -> sessionmaker[Session]:
 
 
 def init_database(session_factory: sessionmaker[Session]) -> None:
-    Base.metadata.create_all(bind=session_factory.kw["bind"])
+    engine = session_factory.kw["bind"]
+    if run_alembic_migrations(engine.url.render_as_string(hide_password=False)):
+        return
+    Base.metadata.create_all(bind=engine)
+
+
+def run_alembic_migrations(database_url: str) -> bool:
+    backend_root = Path(__file__).resolve().parents[2]
+    alembic_ini = backend_root / "alembic.ini"
+    alembic_dir = backend_root / "alembic"
+    if not alembic_ini.exists() or not alembic_dir.exists():
+        return False
+
+    config = Config(str(alembic_ini))
+    config.attributes["configure_logger"] = False
+    config.set_main_option("script_location", str(alembic_dir))
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+    return True
 
 
 def get_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:

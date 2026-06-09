@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -65,4 +63,4 @@ def get_settings() -> AppSettings:
 
 
 def get_database_url(settings: AppSettings) -> str:
-    return os.getenv("PROFITS_CHECK_DATABASE_URL", os.getenv("DATABASE_URL", settings.database_url))
+    return settings.database_url
