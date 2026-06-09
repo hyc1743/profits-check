@@ -46,7 +46,7 @@ from profits_check_backend.services.channels import (
     list_channels,
 )
 from profits_check_backend.services.funding_fees import (
-    collect_monthly_funding_fee_summary,
+    collect_daily_funding_fee_summary,
     funding_fee_summary_payload,
 )
 from profits_check_backend.services.liquidation_monitor import (
@@ -813,7 +813,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @app.get("/api/funding-fees")
     def funding_fees(
-        month: str,
+        date: str,
         _: object = Depends(require_session),
         session: Session = Depends(get_session),
     ):
@@ -821,11 +821,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         channels = list(
             session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
         )
-        logger.info("api.funding_fees.start month=%s enabled_channels=%s", month, len(channels))
+        logger.info("api.funding_fees.start date=%s enabled_channels=%s", date, len(channels))
         try:
             summary = asyncio.run(
-                collect_monthly_funding_fee_summary(
-                    month=month,
+                collect_daily_funding_fee_summary(
+                    date=date,
                     channels=channels,
                     cipher=cipher,
                     provider_builder=app.state.provider_builder,
@@ -834,8 +834,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         except ValueError as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             logger.warning(
-                "api.funding_fees.invalid_month month=%s duration_ms=%s error=%s",
-                month,
+                "api.funding_fees.invalid_date date=%s duration_ms=%s error=%s",
+                date,
                 duration_ms,
                 exc,
             )
@@ -843,8 +843,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         except Exception:
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             logger.exception(
-                "api.funding_fees.failed month=%s enabled_channels=%s duration_ms=%s",
-                month,
+                "api.funding_fees.failed date=%s enabled_channels=%s duration_ms=%s",
+                date,
                 len(channels),
                 duration_ms,
             )
@@ -852,9 +852,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         failed_count = sum(1 for item in summary.channels if item.status == "failed")
         logger.info(
-            "api.funding_fees.success month=%s enabled_channels=%s failed_channels=%s "
+            "api.funding_fees.success date=%s enabled_channels=%s failed_channels=%s "
             "records=%s duration_ms=%s",
-            month,
+            date,
             len(channels),
             failed_count,
             summary.records_count,

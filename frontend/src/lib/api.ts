@@ -242,7 +242,7 @@ export interface FundingFeeChannelSummary {
 }
 
 export interface FundingFeeSummaryResponse {
-  month: string
+  date: string
   startTime: string
   endTime: string
   received: string
@@ -292,8 +292,8 @@ export const api = {
   getHealth: () => requestJson<HealthResponse>('/api/health'),
   getLatestSummary: () => requestJson<SummaryResponse>('/api/summary/latest'),
   getLiveSummary: () => requestJson<SummaryResponse>('/api/summary/live'),
-  getFundingFees: (month: string) =>
-    requestJson<FundingFeeSummaryResponse>(`/api/funding-fees?month=${encodeURIComponent(month)}`),
+  getFundingFees: (date: string) =>
+    requestJson<FundingFeeSummaryResponse>(`/api/funding-fees?date=${encodeURIComponent(date)}`),
   updatePortfolioInclusionRules: (payload: UpdatePortfolioInclusionRulesPayload) =>
     requestJson<UpdatePortfolioInclusionRulesPayload>('/api/portfolio-inclusion-rules', {
       method: 'PUT',

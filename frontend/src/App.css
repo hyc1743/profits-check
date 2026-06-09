@@ -434,7 +434,7 @@
   align-items: center;
 }
 
-.funding-month-field {
+.funding-date-field {
   width: min(100%, 12rem);
 }
 
@@ -1132,7 +1132,7 @@ details[open] summary::before {
   }
 
   .calendar-month-field,
-  .funding-month-field {
+  .funding-date-field {
     min-width: 0;
     width: 100%;
   }

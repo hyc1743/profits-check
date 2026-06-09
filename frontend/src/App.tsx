@@ -123,8 +123,8 @@ function getSnapshotMonths(snapshots: Array<{ createdAt: string }>) {
   return Array.from(new Set(snapshots.map((snapshot) => toMonthKey(snapshot.createdAt)))).sort()
 }
 
-function getCurrentMonthKey() {
-  return toMonthKey(new Date().toISOString())
+function getCurrentDateKey() {
+  return toDateKey(new Date().toISOString())
 }
 
 function formatTrendAxisLabel(value: number) {
@@ -405,7 +405,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [showProfitCalendar, setShowProfitCalendar] = useState(false)
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
-  const [selectedFundingMonth, setSelectedFundingMonth] = useState(getCurrentMonthKey)
+  const [selectedFundingDate, setSelectedFundingDate] = useState(getCurrentDateKey)
   const [pendingSnapshotDeleteId, setPendingSnapshotDeleteId] = useState<number | null>(null)
   const [editingChannel, setEditingChannel] = useState<ChannelResponse | null>(null)
   const [isManualLiquidationRefreshPending, setIsManualLiquidationRefreshPending] = useState(false)
@@ -430,8 +430,8 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     queryFn: api.getLiquidationMonitor,
   })
   const fundingFeesQuery = useQuery({
-    queryKey: ['funding-fees', selectedFundingMonth],
-    queryFn: () => api.getFundingFees(selectedFundingMonth),
+    queryKey: ['funding-fees', selectedFundingDate],
+    queryFn: () => api.getFundingFees(selectedFundingDate),
   })
 
   const runSnapshotMutation = useMutation({
@@ -1059,10 +1059,10 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             ) : null}
             <FundingFeePanel
               summary={fundingSummary}
-              selectedMonth={selectedFundingMonth}
+              selectedDate={selectedFundingDate}
               isLoading={fundingFeesQuery.isFetching}
               error={fundingFeesQuery.error?.message}
-              onMonthChange={setSelectedFundingMonth}
+              onDateChange={setSelectedFundingDate}
             />
             {showSnapshotEditor ? (
               <div className="snapshot-list" aria-label="保存的快照">
@@ -1702,16 +1702,16 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function FundingFeePanel({
   summary,
-  selectedMonth,
+  selectedDate,
   isLoading,
   error,
-  onMonthChange,
+  onDateChange,
 }: {
   summary?: FundingFeeSummaryResponse
-  selectedMonth: string
+  selectedDate: string
   isLoading: boolean
   error?: string
-  onMonthChange: (value: string) => void
+  onDateChange: (value: string) => void
 }) {
   const channels = summary?.channels ?? []
 
@@ -1722,12 +1722,12 @@ function FundingFeePanel({
           <h3>资金费统计</h3>
           <span>{isLoading ? '统计中' : `${summary?.recordsCount ?? 0} 条结算记录`}</span>
         </div>
-        <label className="field funding-month-field">
-          <span>资金费月份</span>
+        <label className="field funding-date-field">
+          <span>资金费日期</span>
           <input
-            type="month"
-            value={selectedMonth}
-            onChange={(event) => onMonthChange(event.target.value)}
+            type="date"
+            value={selectedDate}
+            onChange={(event) => onDateChange(event.target.value)}
           />
         </label>
       </div>

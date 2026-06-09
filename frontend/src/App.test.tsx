@@ -230,9 +230,9 @@ const liquidationMonitorPayload = {
 }
 
 const fundingFeesPayload = {
-  month: '2026-06',
-  startTime: '2026-06-01T00:00:00+08:00',
-  endTime: '2026-07-01T00:00:00+08:00',
+  date: '2026-06-09',
+  startTime: '2026-06-09T00:00:00+08:00',
+  endTime: '2026-06-10T00:00:00+08:00',
   received: '12.50000000',
   paid: '2.25000000',
   net: '10.25000000',
