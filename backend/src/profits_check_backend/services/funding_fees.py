@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -15,6 +17,7 @@ from profits_check_backend.services.channels import decode_public_config, decode
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 MONTH_TIMEZONE = ZoneInfo("Asia/Shanghai")
 SEVEN_DAY_WINDOW_PROVIDERS = {"gate", "bybit"}
+logger = logging.getLogger("profits_check.funding_fees")
 
 
 @dataclass(slots=True)
@@ -66,10 +69,24 @@ async def collect_monthly_funding_fee_summary(
     cipher: SecretCipher,
     provider_builder,
 ) -> FundingFeeMonthlySummary:
+    started_at = time.perf_counter()
     start_time, end_time, start_ms, end_ms = month_bounds_ms(month)
+    logger.info(
+        "funding_fees.start month=%s channels=%s start_ms=%s end_ms=%s",
+        month,
+        len(channels),
+        start_ms,
+        end_ms,
+    )
 
     async def collect_channel(channel: Channel) -> FundingFeeChannelSummary:
         if not channel.enabled:
+            logger.info(
+                "funding_fees.channel_skipped channel_id=%s provider=%s name=%s status=disabled",
+                channel.id,
+                channel.provider,
+                channel.name,
+            )
             return FundingFeeChannelSummary(
                 channel_id=channel.id,
                 channel_name=channel.name,
@@ -83,17 +100,48 @@ async def collect_monthly_funding_fee_summary(
                 config=decode_public_config(channel),
                 secrets=decode_secret_config(channel, cipher),
             )
+            windows = funding_fee_query_windows(channel.provider, start_time, end_time)
+            channel_started_at = time.perf_counter()
+            logger.info(
+                "funding_fees.channel_start channel_id=%s provider=%s name=%s windows=%s",
+                channel.id,
+                channel.provider,
+                channel.name,
+                len(windows),
+            )
             window_records = await asyncio.gather(
                 *(
-                    provider.collect_funding_fee_records(window_start_ms, window_end_ms)
-                    for window_start_ms, window_end_ms in funding_fee_query_windows(
-                        channel.provider, start_time, end_time
+                    collect_channel_window(
+                        provider=provider,
+                        channel=channel,
+                        index=index,
+                        start_time_ms=window_start_ms,
+                        end_time_ms=window_end_ms,
                     )
+                    for index, (window_start_ms, window_end_ms) in enumerate(windows, start=1)
                 )
             )
             records = [record for records in window_records for record in records]
+            duration_ms = int((time.perf_counter() - channel_started_at) * 1000)
+            logger.info(
+                "funding_fees.channel_success channel_id=%s provider=%s name=%s "
+                "windows=%s records=%s duration_ms=%s",
+                channel.id,
+                channel.provider,
+                channel.name,
+                len(windows),
+                len(records),
+                duration_ms,
+            )
             return summarize_channel_records(channel, records)
         except Exception as exc:
+            logger.exception(
+                "funding_fees.channel_failed channel_id=%s provider=%s name=%s error=%s",
+                channel.id,
+                channel.provider,
+                channel.name,
+                exc,
+            )
             return FundingFeeChannelSummary(
                 channel_id=channel.id,
                 channel_name=channel.name,
@@ -107,6 +155,16 @@ async def collect_monthly_funding_fee_summary(
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
     net = sum((item.net for item in channel_summaries), Decimal("0"))
     records_count = sum(item.records_count for item in channel_summaries)
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    failed_count = sum(1 for item in channel_summaries if item.status == "failed")
+    logger.info(
+        "funding_fees.done month=%s channels=%s failed=%s records=%s duration_ms=%s",
+        month,
+        len(channel_summaries),
+        failed_count,
+        records_count,
+        duration_ms,
+    )
     return FundingFeeMonthlySummary(
         month=month,
         start_time=start_time,
@@ -117,6 +175,58 @@ async def collect_monthly_funding_fee_summary(
         records_count=records_count,
         channels=channel_summaries,
     )
+
+
+async def collect_channel_window(
+    *,
+    provider: Provider,
+    channel: Channel,
+    index: int,
+    start_time_ms: int,
+    end_time_ms: int,
+) -> list[FundingFeeRecord]:
+    started_at = time.perf_counter()
+    logger.info(
+        "funding_fees.window_start channel_id=%s provider=%s name=%s window=%s "
+        "start_ms=%s end_ms=%s",
+        channel.id,
+        channel.provider,
+        channel.name,
+        index,
+        start_time_ms,
+        end_time_ms,
+    )
+    try:
+        records = await provider.collect_funding_fee_records(start_time_ms, end_time_ms)
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.exception(
+            "funding_fees.window_failed channel_id=%s provider=%s name=%s window=%s "
+            "start_ms=%s end_ms=%s duration_ms=%s error=%s",
+            channel.id,
+            channel.provider,
+            channel.name,
+            index,
+            start_time_ms,
+            end_time_ms,
+            duration_ms,
+            exc,
+        )
+        raise
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "funding_fees.window_success channel_id=%s provider=%s name=%s window=%s "
+        "start_ms=%s end_ms=%s records=%s duration_ms=%s",
+        channel.id,
+        channel.provider,
+        channel.name,
+        index,
+        start_time_ms,
+        end_time_ms,
+        len(records),
+        duration_ms,
+    )
+    return records
 
 
 def funding_fee_query_windows(

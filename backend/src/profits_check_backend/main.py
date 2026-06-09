@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -78,6 +80,7 @@ SECRET_PUBLIC_CONFIG_KEYS = {
     "secret",
     "password",
 }
+logger = logging.getLogger("profits_check.api")
 
 CUSTOM_URL_KEYS = {
     "baseUrl",
@@ -265,7 +268,20 @@ class PortfolioInclusionRulesPayload(BaseModel):
     items: list[PortfolioInclusionRuleItemPayload]
 
 
+def configure_application_logging() -> None:
+    app_logger = logging.getLogger("profits_check")
+    if any(handler.name == "profits_check.stderr" for handler in app_logger.handlers):
+        return
+    handler = logging.StreamHandler()
+    handler.name = "profits_check.stderr"
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
+
+
 def create_app(settings: AppSettings | None = None) -> FastAPI:
+    configure_application_logging()
     app_settings = settings or get_settings()
     session_factory = build_session_factory(app_settings)
     init_database(session_factory)
@@ -801,9 +817,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         _: object = Depends(require_session),
         session: Session = Depends(get_session),
     ):
+        started_at = time.perf_counter()
         channels = list(
             session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
         )
+        logger.info("api.funding_fees.start month=%s enabled_channels=%s", month, len(channels))
         try:
             summary = asyncio.run(
                 collect_monthly_funding_fee_summary(
@@ -814,7 +832,34 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 )
             )
         except ValueError as exc:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "api.funding_fees.invalid_month month=%s duration_ms=%s error=%s",
+                month,
+                duration_ms,
+                exc,
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.exception(
+                "api.funding_fees.failed month=%s enabled_channels=%s duration_ms=%s",
+                month,
+                len(channels),
+                duration_ms,
+            )
+            raise
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        failed_count = sum(1 for item in summary.channels if item.status == "failed")
+        logger.info(
+            "api.funding_fees.success month=%s enabled_channels=%s failed_channels=%s "
+            "records=%s duration_ms=%s",
+            month,
+            len(channels),
+            failed_count,
+            summary.records_count,
+            duration_ms,
+        )
         return funding_fee_summary_payload(summary)
 
     @app.put("/api/portfolio-inclusion-rules")
