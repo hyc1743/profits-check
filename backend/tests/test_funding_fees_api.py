@@ -244,6 +244,41 @@ def test_previous_monthly_funding_fees_api_reads_persisted_summary(client) -> No
     }
 
 
+def test_previous_monthly_funding_fees_api_reports_running_summary(client) -> None:
+    from profits_check_backend.services.funding_fees import previous_month_period
+
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+    month, start_date, end_date = previous_month_period()
+    assert client.app.state.monthly_funding_fee_lock.acquire(blocking=False)
+    try:
+        response = client.get("/api/funding-fees/monthly/previous")
+    finally:
+        client.app.state.monthly_funding_fee_lock.release()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "month": month,
+        "startDate": start_date,
+        "endDate": end_date,
+        "received": "0.00000000",
+        "paid": "0.00000000",
+        "net": "0.00000000",
+        "recordsCount": 0,
+        "status": "running",
+        "error": None,
+    }
+
+
 def test_funding_fees_api_rejects_invalid_date(client) -> None:
     response = client.get("/api/funding-fees?date=2024-02-30")
 

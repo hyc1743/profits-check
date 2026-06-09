@@ -57,6 +57,7 @@ from profits_check_backend.services.funding_fees import (
     funding_fee_summary_payload,
     monthly_funding_fee_summary_payload,
     previous_month_period,
+    running_monthly_funding_fee_summary_payload,
 )
 from profits_check_backend.services.liquidation_monitor import (
     get_liquidation_monitor_payload,
@@ -904,7 +905,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         _: object = Depends(require_session),
         session: Session = Depends(get_session),
     ):
-        month, _, _ = previous_month_period()
+        month, start_date, end_date = previous_month_period()
         summary = session.scalar(
             select(MonthlyFundingFeeSummary).where(MonthlyFundingFeeSummary.month == month)
         )
@@ -917,8 +918,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             if not channels:
                 raise HTTPException(status_code=404, detail="Monthly funding fee summary not found")
             if not app.state.monthly_funding_fee_lock.acquire(blocking=False):
-                raise HTTPException(
-                    status_code=409, detail="Monthly funding fee summary is already running"
+                return running_monthly_funding_fee_summary_payload(
+                    month=month,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
             try:
                 summary = ensure_previous_month_funding_fee_summary(

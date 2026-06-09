@@ -302,6 +302,30 @@ test('shows recent seven day funding fee totals', async () => {
   expect(screen.getByText('15.50 USD')).toBeInTheDocument()
 })
 
+test('shows previous monthly funding fee collection as running', async () => {
+  installHandlers()
+  server.use(
+    http.get('/api/funding-fees/monthly/previous', () =>
+      HttpResponse.json({
+        ...monthlyFundingFeesPayload,
+        received: '0.00000000',
+        paid: '0.00000000',
+        net: '0.00000000',
+        recordsCount: 0,
+        status: 'running',
+      }),
+    ),
+  )
+  const user = userEvent.setup()
+
+  render(<App />)
+
+  await user.click(await screen.findByRole('button', { name: '资费统计' }))
+
+  expect(await screen.findByText('2026-05 · 统计中')).toBeInTheDocument()
+  expect(screen.queryByText('Monthly funding fee summary is already running')).not.toBeInTheDocument()
+})
+
 function installHandlers() {
   server.use(
     http.get('/api/auth/session', () => HttpResponse.json({ authenticated: true })),

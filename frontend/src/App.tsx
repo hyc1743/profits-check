@@ -440,6 +440,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
     queryKey: ['funding-fees', 'monthly', 'previous'],
     queryFn: api.getPreviousMonthlyFundingFees,
     enabled: showFundingFees,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5000 : false),
   })
 
   const runSnapshotMutation = useMutation({
@@ -1742,6 +1743,7 @@ function FundingFeePanel({
 }) {
   const channels = summary?.channels ?? []
   const recentSevenDays = summary?.recentSevenDays
+  const isMonthlyRunning = monthlySummary?.status === 'running'
 
   return (
     <div className="funding-fee-panel" aria-label="资金费统计">
@@ -1769,8 +1771,10 @@ function FundingFeePanel({
         <div className="asset-totals-head funding-recent-head">
           <h4>上月资费</h4>
           <span>
-            {isMonthlyLoading
-              ? '统计中'
+            {isMonthlyLoading || isMonthlyRunning
+              ? monthlySummary
+                ? `${monthlySummary.month} · 统计中`
+                : '统计中'
               : monthlySummary
                 ? `${monthlySummary.month} · ${monthlySummary.recordsCount} 条`
                 : '暂无结算记录'}

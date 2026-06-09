@@ -405,6 +405,22 @@ def monthly_funding_fee_summary_payload(summary: MonthlyFundingFeeSummary) -> di
     }
 
 
+def running_monthly_funding_fee_summary_payload(
+    *, month: str, start_date: str, end_date: str
+) -> dict[str, object]:
+    return {
+        "month": month,
+        "startDate": start_date,
+        "endDate": end_date,
+        "received": "0.00000000",
+        "paid": "0.00000000",
+        "net": "0.00000000",
+        "recordsCount": 0,
+        "status": "running",
+        "error": None,
+    }
+
+
 def _period_summary_payload(summary: FundingFeePeriodSummary) -> dict[str, object]:
     return {
         "startDate": summary.start_date,
