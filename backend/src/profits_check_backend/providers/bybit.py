@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
 import time
 from decimal import Decimal
+from typing import Any
 from urllib.parse import urlencode
 
 from profits_check_backend.providers.base import (
@@ -17,6 +19,10 @@ from profits_check_backend.providers.base import (
     ProviderSnapshot,
 )
 from profits_check_backend.providers.http import provider_http_client
+
+BYBIT_RATE_LIMIT_RETRY_SECONDS = 2.0
+BYBIT_RATE_LIMIT_MAX_RETRIES = 3
+BYBIT_RATE_LIMIT_RET_CODES = {10006, "10006"}
 
 
 class BybitProvider(Provider):
@@ -207,16 +213,13 @@ class BybitProvider(Provider):
                 if cursor:
                     params["cursor"] = cursor
                 query_string = urlencode(params)
-                headers = self._signature_headers(query_string)
-                response = await client.get(
-                    f"{base_url}/v5/account/transaction-log",
-                    headers=headers,
-                    params=params,
+                payload = await self._get_bybit(
+                    client,
+                    base_url,
+                    "/v5/account/transaction-log",
+                    params,
+                    query_string=query_string,
                 )
-                response.raise_for_status()
-                payload = response.json()
-                if payload.get("retCode") not in {0, "0"}:
-                    raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
                 result = payload.get("result", {})
                 items = result.get("list", []) if isinstance(result, dict) else []
                 records.extend(
@@ -240,6 +243,35 @@ class BybitProvider(Provider):
                 cursor = next_cursor
 
         return records
+
+    async def _get_bybit(
+        self,
+        client,
+        base_url: str,
+        path: str,
+        params: dict[str, str],
+        *,
+        query_string: str | None = None,
+    ) -> dict[str, Any]:
+        selected_query_string = query_string or urlencode(params)
+        for attempt in range(BYBIT_RATE_LIMIT_MAX_RETRIES + 1):
+            headers = self._signature_headers(selected_query_string)
+            response = await client.get(f"{base_url}{path}", headers=headers, params=params)
+            if response.status_code == 429 and attempt < BYBIT_RATE_LIMIT_MAX_RETRIES:
+                retry_after = _retry_after_seconds(response)
+                await asyncio.sleep(
+                    retry_after if retry_after is not None else BYBIT_RATE_LIMIT_RETRY_SECONDS
+                )
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            if _is_bybit_rate_limited(payload) and attempt < BYBIT_RATE_LIMIT_MAX_RETRIES:
+                await asyncio.sleep(BYBIT_RATE_LIMIT_RETRY_SECONDS)
+                continue
+            if payload.get("retCode") not in {0, "0"}:
+                raise ProviderError(str(payload.get("retMsg", "Bybit request failed")))
+            return dict(payload)
+        raise ProviderError("Bybit request failed")
 
     def _position_from_payload(self, item: dict[str, object]) -> ContractPositionRisk:
         return ContractPositionRisk(
@@ -330,3 +362,18 @@ def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
     return int(str(value))
+
+
+def _is_bybit_rate_limited(payload: dict[str, Any]) -> bool:
+    ret_msg = str(payload.get("retMsg", ""))
+    return payload.get("retCode") in BYBIT_RATE_LIMIT_RET_CODES or "Too many visits" in ret_msg
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    retry_after = response.headers.get("Retry-After")
+    if not retry_after:
+        return None
+    try:
+        return max(float(retry_after), 0.0)
+    except ValueError:
+        return None

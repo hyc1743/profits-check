@@ -1753,6 +1753,53 @@ async def test_bybit_provider_collects_funding_fee_records(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_bybit_provider_retries_funding_fee_rate_limit(httpx_mock, monkeypatch) -> None:
+    from profits_check_backend.providers import bybit
+    from profits_check_backend.providers.bybit import BybitProvider
+
+    monkeypatch.setattr(bybit, "BYBIT_RATE_LIMIT_RETRY_SECONDS", 0)
+
+    url = (
+        "https://api.bybit.com/v5/account/transaction-log?accountType=UNIFIED"
+        "&category=linear&startTime=1700000000000&endTime=1702591999999&limit=50"
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=url,
+        json={"retCode": 10006, "retMsg": "Too many visits. Exceeded the API Rate Limit."},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=url,
+        json={
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "currency": "USDT",
+                        "funding": "4.2",
+                        "transactionTime": "1700000000000",
+                    }
+                ],
+                "nextPageCursor": "",
+            },
+        },
+    )
+    provider = BybitProvider(
+        channel_name="Bybit",
+        config={},
+        secrets={"apiKey": "key", "apiSecret": "secret"},
+        now_factory=lambda: "1702600000000",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert len(records) == 1
+    assert records[0].amount == Decimal("4.2")
+
+
+@pytest.mark.asyncio
 async def test_aster_provider_collects_funding_fee_records(httpx_mock) -> None:
     from profits_check_backend.providers.aster import AsterProvider
 
