@@ -190,7 +190,7 @@ async def collect_daily_funding_fee_summary(
                 records=records,
             )
         except Exception as exc:
-            logger.exception(
+            logger.error(
                 "funding_fees.channel_failed channel_id=%s provider=%s name=%s error=%s",
                 channel.id,
                 channel.provider,
@@ -272,7 +272,7 @@ async def collect_monthly_funding_fee_records(
                 records.extend(await provider.collect_funding_fee_records(start_ms, end_ms))
             return MonthlyFundingFeeCollection(records=records)
         except Exception as exc:
-            logger.exception(
+            logger.error(
                 "funding_fees.monthly_channel_failed channel_id=%s provider=%s name=%s error=%s",
                 channel.id,
                 channel.provider,

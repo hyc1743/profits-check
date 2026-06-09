@@ -1616,6 +1616,57 @@ async def test_okx_provider_collects_funding_fee_records(httpx_mock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_okx_provider_retries_funding_fee_rate_limit(httpx_mock) -> None:
+    from profits_check_backend.providers.okx import OkxProvider
+
+    expense_url = (
+        "https://www.okx.com/api/v5/account/bills-archive"
+        "?subType=173&begin=1700000000000&end=1702591999999&limit=100"
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=expense_url,
+        status_code=429,
+        headers={"Retry-After": "0"},
+        json={"code": "50011", "msg": "Too Many Requests"},
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=expense_url,
+        json={
+            "code": "0",
+            "data": [
+                {
+                    "subType": "173",
+                    "pnl": "-1.2",
+                    "ccy": "USDT",
+                    "ts": "1700000000000",
+                    "instId": "BTC-USDT-SWAP",
+                }
+            ],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            "https://www.okx.com/api/v5/account/bills-archive"
+            "?subType=174&begin=1700000000000&end=1702591999999&limit=100"
+        ),
+        json={"code": "0", "data": []},
+    )
+    provider = OkxProvider(
+        channel_name="OKX",
+        config={},
+        secrets={"apiKey": "key", "apiSecret": "secret", "passphrase": "pass"},
+        now_factory=lambda: "2024-01-01T00:00:00.000Z",
+    )
+
+    records = await provider.collect_funding_fee_records(1700000000000, 1702591999999)
+
+    assert [record.amount for record in records] == [Decimal("-1.2")]
+
+
+@pytest.mark.asyncio
 async def test_bitget_provider_collects_funding_fee_records(httpx_mock) -> None:
     from profits_check_backend.providers.bitget import BitgetProvider
 

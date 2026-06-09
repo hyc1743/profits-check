@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -23,6 +25,9 @@ from profits_check_backend.providers.http import provider_http_client
 OKX_CONTRACT_POSITION_TYPES = ("SWAP", "FUTURES")
 OKX_GRID_STRATEGY_TYPES = ("grid", "contract_grid")
 OKX_DCA_STRATEGY_TYPES = ("spot_dca", "contract_dca")
+OKX_BILLS_ARCHIVE_MIN_INTERVAL_SECONDS = 0.45
+OKX_RATE_LIMIT_RETRY_SECONDS = 2.0
+OKX_RATE_LIMIT_MAX_RETRIES = 3
 
 
 class OkxProvider(Provider):
@@ -39,6 +44,8 @@ class OkxProvider(Provider):
         self.now_factory = now_factory or (
             lambda: datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         )
+        self._bills_archive_lock = asyncio.Lock()
+        self._last_bills_archive_request_at = 0.0
 
     def _signature_headers(self, method: str, path_with_query: str) -> dict[str, str]:
         api_key = str(self.secrets.get("apiKey", ""))
@@ -228,13 +235,30 @@ class OkxProvider(Provider):
     ) -> dict[str, Any]:
         query = urlencode(params or {})
         path_with_query = f"{path}?{query}" if query else path
-        headers = self._signature_headers("GET", path_with_query)
-        response = await client.get(f"{base_url}{path}", headers=headers, params=params)
-        response.raise_for_status()
+        for attempt in range(OKX_RATE_LIMIT_MAX_RETRIES + 1):
+            if path == "/api/v5/account/bills-archive":
+                await self._wait_for_bills_archive_slot()
+            headers = self._signature_headers("GET", path_with_query)
+            response = await client.get(f"{base_url}{path}", headers=headers, params=params)
+            if response.status_code == 429 and attempt < OKX_RATE_LIMIT_MAX_RETRIES:
+                retry_after = _retry_after_seconds(response)
+                await asyncio.sleep(
+                    retry_after if retry_after is not None else OKX_RATE_LIMIT_RETRY_SECONDS
+                )
+                continue
+            response.raise_for_status()
+            break
         payload = response.json()
         if payload.get("code") not in {0, "0", None}:
             raise ProviderError(str(payload.get("msg", "OKX request failed")))
         return dict(payload)
+
+    async def _wait_for_bills_archive_slot(self) -> None:
+        async with self._bills_archive_lock:
+            elapsed = time.monotonic() - self._last_bills_archive_request_at
+            if elapsed < OKX_BILLS_ARCHIVE_MIN_INTERVAL_SECONDS:
+                await asyncio.sleep(OKX_BILLS_ARCHIVE_MIN_INTERVAL_SECONDS - elapsed)
+            self._last_bills_archive_request_at = time.monotonic()
 
     async def _collect_strategy_assets(self, client, base_url: str) -> list[AssetBalance]:
         assets: list[AssetBalance] = []
@@ -419,6 +443,16 @@ def _optional_int(value: object) -> int | None:
     if value in (None, ""):
         return None
     return int(str(value))
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    retry_after = response.headers.get("Retry-After")
+    if not retry_after:
+        return None
+    try:
+        return max(float(retry_after), 0.0)
+    except ValueError:
+        return None
 
 
 def _sum_optional_decimal(values) -> Decimal:
