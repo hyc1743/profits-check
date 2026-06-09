@@ -39,8 +39,9 @@ class FundingFeeChannelCollection:
 
 
 @dataclass(slots=True)
-class FundingFeeDailySummary:
-    date: str
+class FundingFeePeriodSummary:
+    start_date: str
+    end_date: str
     received: Decimal
     paid: Decimal
     net: Decimal
@@ -57,7 +58,7 @@ class FundingFeeSummary:
     net: Decimal
     records_count: int
     channels: list[FundingFeeChannelSummary]
-    recent_days: list[FundingFeeDailySummary]
+    recent_seven_days: FundingFeePeriodSummary
 
 
 def date_bounds_ms(date: str) -> tuple[datetime, datetime, int, int]:
@@ -175,15 +176,15 @@ async def collect_daily_funding_fee_summary(
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
     net = sum((item.net for item in channel_summaries), Decimal("0"))
     records_count = sum(item.records_count for item in channel_summaries)
-    recent_days = summarize_daily_records(
+    recent_seven_days = summarize_period_records(
         [
             record
             for collection in channel_collections
             for record in collection.records
             if start_ms <= record.timestamp_ms <= end_ms
         ],
+        start_date=range_start_time.date().isoformat(),
         end_date=date,
-        days=7,
     )
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     failed_count = sum(1 for item in channel_summaries if item.status == "failed")
@@ -204,7 +205,7 @@ async def collect_daily_funding_fee_summary(
         net=net,
         records_count=records_count,
         channels=channel_summaries,
-        recent_days=recent_days,
+        recent_seven_days=recent_seven_days,
     )
 
 
@@ -224,33 +225,19 @@ def summarize_channel_records(
     )
 
 
-def summarize_daily_records(
-    records: list[FundingFeeRecord], *, end_date: str, days: int
-) -> list[FundingFeeDailySummary]:
-    end_start_time, _, _, _ = date_bounds_ms(end_date)
-    dates = [(end_start_time - timedelta(days=offset)).date().isoformat() for offset in range(days)]
-    dates.reverse()
-    records_by_date: dict[str, list[FundingFeeRecord]] = {date: [] for date in dates}
-    for record in records:
-        record_date = _record_date(record)
-        if record_date in records_by_date:
-            records_by_date[record_date].append(record)
-    return [
-        FundingFeeDailySummary(
-            date=date,
-            received=sum(
-                (record.amount for record in records_by_date[date] if record.amount > 0),
-                Decimal("0"),
-            ),
-            paid=sum(
-                (-record.amount for record in records_by_date[date] if record.amount < 0),
-                Decimal("0"),
-            ),
-            net=sum((record.amount for record in records_by_date[date]), Decimal("0")),
-            records_count=len(records_by_date[date]),
-        )
-        for date in dates
-    ]
+def summarize_period_records(
+    records: list[FundingFeeRecord], *, start_date: str, end_date: str
+) -> FundingFeePeriodSummary:
+    received = sum((record.amount for record in records if record.amount > 0), Decimal("0"))
+    paid = sum((-record.amount for record in records if record.amount < 0), Decimal("0"))
+    return FundingFeePeriodSummary(
+        start_date=start_date,
+        end_date=end_date,
+        received=received,
+        paid=paid,
+        net=received - paid,
+        records_count=len(records),
+    )
 
 
 def funding_fee_summary_payload(summary: FundingFeeSummary) -> dict[str, object]:
@@ -276,23 +263,19 @@ def funding_fee_summary_payload(summary: FundingFeeSummary) -> dict[str, object]
             }
             for item in summary.channels
         ],
-        "recentDays": [
-            {
-                "date": item.date,
-                "received": _decimal_text(item.received),
-                "paid": _decimal_text(item.paid),
-                "net": _decimal_text(item.net),
-                "recordsCount": item.records_count,
-            }
-            for item in summary.recent_days
-        ],
+        "recentSevenDays": _period_summary_payload(summary.recent_seven_days),
     }
 
 
-def _record_date(record: FundingFeeRecord) -> str:
-    return datetime.fromtimestamp(record.timestamp_ms / 1000, tz=UTC).astimezone(
-        DATE_TIMEZONE
-    ).date().isoformat()
+def _period_summary_payload(summary: FundingFeePeriodSummary) -> dict[str, object]:
+    return {
+        "startDate": summary.start_date,
+        "endDate": summary.end_date,
+        "received": _decimal_text(summary.received),
+        "paid": _decimal_text(summary.paid),
+        "net": _decimal_text(summary.net),
+        "recordsCount": summary.records_count,
+    }
 
 
 def _decimal_text(value: Decimal) -> str:

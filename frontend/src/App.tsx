@@ -1714,7 +1714,7 @@ function FundingFeePanel({
   onDateChange: (value: string) => void
 }) {
   const channels = summary?.channels ?? []
-  const recentDays = summary?.recentDays ?? []
+  const recentSevenDays = summary?.recentSevenDays
 
   return (
     <div className="funding-fee-panel" aria-label="资金费统计">
@@ -1741,20 +1741,16 @@ function FundingFeePanel({
       <div className="funding-recent-block" aria-label="最近 7 天资金费">
         <div className="asset-totals-head funding-recent-head">
           <h4>最近 7 天</h4>
-          <span>{`${recentDays.reduce((count, item) => count + item.recordsCount, 0)} 条结算记录`}</span>
+          <span>
+            {recentSevenDays
+              ? `${recentSevenDays.startDate} 至 ${recentSevenDays.endDate} · ${recentSevenDays.recordsCount} 条`
+              : '暂无结算记录'}
+          </span>
         </div>
-        <div className="funding-recent-list" role="list" aria-label="最近 7 天资金费明细">
-          {recentDays.length > 0 ? (
-            recentDays.map((day) => (
-              <div key={day.date} className="funding-recent-row" role="listitem">
-                <strong>{day.date}</strong>
-                <span>{`${day.recordsCount} 条`}</span>
-                <b>{formatUsd(day.net)}</b>
-              </div>
-            ))
-          ) : (
-            <p className="empty-copy">暂无最近 7 天资金费记录。</p>
-          )}
+        <div className="funding-recent-grid">
+          <Metric label="7 天资金费收取" value={formatUsd(recentSevenDays?.received ?? '0')} />
+          <Metric label="7 天资金费付出" value={formatUsd(recentSevenDays?.paid ?? '0')} />
+          <Metric label="7 天净资金费" value={formatUsd(recentSevenDays?.net ?? '0')} />
         </div>
       </div>
       <div className="funding-channel-list" role="list" aria-label="渠道资金费明细">

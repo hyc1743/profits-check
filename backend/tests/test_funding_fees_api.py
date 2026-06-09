@@ -102,17 +102,14 @@ def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
     assert payload["received"] == "0.00000000"
     assert payload["paid"] == "0.75000000"
     assert payload["net"] == "-0.75000000"
-    assert [item["date"] for item in payload["recentDays"]] == [
-        "2024-07-01",
-        "2024-07-02",
-        "2024-07-03",
-        "2024-07-04",
-        "2024-07-05",
-        "2024-07-06",
-        "2024-07-07",
-    ]
-    assert payload["recentDays"][0]["net"] == "1.50000000"
-    assert payload["recentDays"][6]["paid"] == "0.75000000"
+    assert payload["recentSevenDays"] == {
+        "startDate": "2024-07-01",
+        "endDate": "2024-07-07",
+        "received": "1.50000000",
+        "paid": "0.75000000",
+        "net": "0.75000000",
+        "recordsCount": 2,
+    }
 
 
 def test_funding_fees_api_rejects_invalid_date(client) -> None:
