@@ -237,6 +237,15 @@ const fundingFeesPayload = {
   paid: '2.25000000',
   net: '10.25000000',
   recordsCount: 2,
+  recentDays: [
+    { date: '2026-06-03', received: '0.00000000', paid: '0.50000000', net: '-0.50000000', recordsCount: 1 },
+    { date: '2026-06-04', received: '1.25000000', paid: '0.00000000', net: '1.25000000', recordsCount: 1 },
+    { date: '2026-06-05', received: '0.00000000', paid: '0.00000000', net: '0.00000000', recordsCount: 0 },
+    { date: '2026-06-06', received: '2.50000000', paid: '0.00000000', net: '2.50000000', recordsCount: 1 },
+    { date: '2026-06-07', received: '0.00000000', paid: '1.00000000', net: '-1.00000000', recordsCount: 1 },
+    { date: '2026-06-08', received: '3.00000000', paid: '0.00000000', net: '3.00000000', recordsCount: 1 },
+    { date: '2026-06-09', received: '12.50000000', paid: '2.25000000', net: '10.25000000', recordsCount: 2 },
+  ],
   channels: [
     {
       channelId: 1,
@@ -251,6 +260,18 @@ const fundingFeesPayload = {
     },
   ],
 }
+
+test('shows recent seven day funding fee totals', async () => {
+  installHandlers()
+
+  render(<App />)
+
+  expect(await screen.findByText('最近 7 天')).toBeInTheDocument()
+  expect(await screen.findByText('2026-06-03')).toBeInTheDocument()
+  expect(screen.getByText('2026-06-09')).toBeInTheDocument()
+  expect(screen.getByText('-0.50 USD')).toBeInTheDocument()
+  expect(screen.getAllByText('10.25 USD').length).toBeGreaterThan(0)
+})
 
 function installHandlers() {
   server.use(

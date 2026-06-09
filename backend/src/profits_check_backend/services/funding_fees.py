@@ -33,7 +33,22 @@ class FundingFeeChannelSummary:
 
 
 @dataclass(slots=True)
+class FundingFeeChannelCollection:
+    summary: FundingFeeChannelSummary
+    records: list[FundingFeeRecord]
+
+
+@dataclass(slots=True)
 class FundingFeeDailySummary:
+    date: str
+    received: Decimal
+    paid: Decimal
+    net: Decimal
+    records_count: int
+
+
+@dataclass(slots=True)
+class FundingFeeSummary:
     date: str
     start_time: datetime
     end_time: datetime
@@ -42,6 +57,7 @@ class FundingFeeDailySummary:
     net: Decimal
     records_count: int
     channels: list[FundingFeeChannelSummary]
+    recent_days: list[FundingFeeDailySummary]
 
 
 def date_bounds_ms(date: str) -> tuple[datetime, datetime, int, int]:
@@ -64,9 +80,14 @@ async def collect_daily_funding_fee_summary(
     channels: list[Channel],
     cipher: SecretCipher,
     provider_builder,
-) -> FundingFeeDailySummary:
+) -> FundingFeeSummary:
     started_at = time.perf_counter()
-    start_time, end_time, start_ms, end_ms = date_bounds_ms(date)
+    selected_start_time, selected_end_time, selected_start_ms, selected_end_ms = date_bounds_ms(
+        date
+    )
+    range_start_time = selected_start_time - timedelta(days=6)
+    start_ms = int(range_start_time.astimezone(UTC).timestamp() * 1000)
+    end_ms = selected_end_ms
     logger.info(
         "funding_fees.start date=%s channels=%s start_ms=%s end_ms=%s",
         date,
@@ -75,7 +96,7 @@ async def collect_daily_funding_fee_summary(
         end_ms,
     )
 
-    async def collect_channel(channel: Channel) -> FundingFeeChannelSummary:
+    async def collect_channel(channel: Channel) -> FundingFeeChannelCollection:
         if not channel.enabled:
             logger.info(
                 "funding_fees.channel_skipped channel_id=%s provider=%s name=%s status=disabled",
@@ -83,11 +104,14 @@ async def collect_daily_funding_fee_summary(
                 channel.provider,
                 channel.name,
             )
-            return FundingFeeChannelSummary(
-                channel_id=channel.id,
-                channel_name=channel.name,
-                provider=channel.provider,
-                status="disabled",
+            return FundingFeeChannelCollection(
+                summary=FundingFeeChannelSummary(
+                    channel_id=channel.id,
+                    channel_name=channel.name,
+                    provider=channel.provider,
+                    status="disabled",
+                ),
+                records=[],
             )
         try:
             provider: Provider = provider_builder(
@@ -117,7 +141,15 @@ async def collect_daily_funding_fee_summary(
                 len(records),
                 duration_ms,
             )
-            return summarize_channel_records(channel, records)
+            selected_records = [
+                record
+                for record in records
+                if selected_start_ms <= record.timestamp_ms <= selected_end_ms
+            ]
+            return FundingFeeChannelCollection(
+                summary=summarize_channel_records(channel, selected_records),
+                records=records,
+            )
         except Exception as exc:
             logger.exception(
                 "funding_fees.channel_failed channel_id=%s provider=%s name=%s error=%s",
@@ -126,19 +158,33 @@ async def collect_daily_funding_fee_summary(
                 channel.name,
                 exc,
             )
-            return FundingFeeChannelSummary(
-                channel_id=channel.id,
-                channel_name=channel.name,
-                provider=channel.provider,
-                status="failed",
-                error=str(exc),
+            return FundingFeeChannelCollection(
+                summary=FundingFeeChannelSummary(
+                    channel_id=channel.id,
+                    channel_name=channel.name,
+                    provider=channel.provider,
+                    status="failed",
+                    error=str(exc),
+                ),
+                records=[],
             )
 
-    channel_summaries = await asyncio.gather(*(collect_channel(channel) for channel in channels))
+    channel_collections = await asyncio.gather(*(collect_channel(channel) for channel in channels))
+    channel_summaries = [item.summary for item in channel_collections]
     received = sum((item.received for item in channel_summaries), Decimal("0"))
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
     net = sum((item.net for item in channel_summaries), Decimal("0"))
     records_count = sum(item.records_count for item in channel_summaries)
+    recent_days = summarize_daily_records(
+        [
+            record
+            for collection in channel_collections
+            for record in collection.records
+            if start_ms <= record.timestamp_ms <= end_ms
+        ],
+        end_date=date,
+        days=7,
+    )
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     failed_count = sum(1 for item in channel_summaries if item.status == "failed")
     logger.info(
@@ -149,15 +195,16 @@ async def collect_daily_funding_fee_summary(
         records_count,
         duration_ms,
     )
-    return FundingFeeDailySummary(
+    return FundingFeeSummary(
         date=date,
-        start_time=start_time,
-        end_time=end_time,
+        start_time=selected_start_time,
+        end_time=selected_end_time,
         received=received,
         paid=paid,
         net=net,
         records_count=records_count,
         channels=channel_summaries,
+        recent_days=recent_days,
     )
 
 
@@ -177,7 +224,36 @@ def summarize_channel_records(
     )
 
 
-def funding_fee_summary_payload(summary: FundingFeeDailySummary) -> dict[str, object]:
+def summarize_daily_records(
+    records: list[FundingFeeRecord], *, end_date: str, days: int
+) -> list[FundingFeeDailySummary]:
+    end_start_time, _, _, _ = date_bounds_ms(end_date)
+    dates = [(end_start_time - timedelta(days=offset)).date().isoformat() for offset in range(days)]
+    dates.reverse()
+    records_by_date: dict[str, list[FundingFeeRecord]] = {date: [] for date in dates}
+    for record in records:
+        record_date = _record_date(record)
+        if record_date in records_by_date:
+            records_by_date[record_date].append(record)
+    return [
+        FundingFeeDailySummary(
+            date=date,
+            received=sum(
+                (record.amount for record in records_by_date[date] if record.amount > 0),
+                Decimal("0"),
+            ),
+            paid=sum(
+                (-record.amount for record in records_by_date[date] if record.amount < 0),
+                Decimal("0"),
+            ),
+            net=sum((record.amount for record in records_by_date[date]), Decimal("0")),
+            records_count=len(records_by_date[date]),
+        )
+        for date in dates
+    ]
+
+
+def funding_fee_summary_payload(summary: FundingFeeSummary) -> dict[str, object]:
     return {
         "date": summary.date,
         "startTime": summary.start_time.isoformat(),
@@ -200,8 +276,24 @@ def funding_fee_summary_payload(summary: FundingFeeDailySummary) -> dict[str, ob
             }
             for item in summary.channels
         ],
+        "recentDays": [
+            {
+                "date": item.date,
+                "received": _decimal_text(item.received),
+                "paid": _decimal_text(item.paid),
+                "net": _decimal_text(item.net),
+                "recordsCount": item.records_count,
+            }
+            for item in summary.recent_days
+        ],
     }
 
 
+def _record_date(record: FundingFeeRecord) -> str:
+    return datetime.fromtimestamp(record.timestamp_ms / 1000, tz=UTC).astimezone(
+        DATE_TIMEZONE
+    ).date().isoformat()
+
+
 def _decimal_text(value: Decimal) -> str:
-    return str(value.quantize(Decimal("0.00000001")))
+    return format(value.quantize(Decimal("0.00000001")), "f")

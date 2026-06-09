@@ -241,6 +241,14 @@ export interface FundingFeeChannelSummary {
   error?: string | null
 }
 
+export interface FundingFeeDailySummary {
+  date: string
+  received: string
+  paid: string
+  net: string
+  recordsCount: number
+}
+
 export interface FundingFeeSummaryResponse {
   date: string
   startTime: string
@@ -249,6 +257,7 @@ export interface FundingFeeSummaryResponse {
   paid: string
   net: string
   recordsCount: number
+  recentDays: FundingFeeDailySummary[]
   channels: FundingFeeChannelSummary[]
 }
 
