@@ -53,9 +53,11 @@ from profits_check_backend.services.channels import (
     list_channels,
 )
 from profits_check_backend.services.funding_fees import (
+    CurrentMonthFundingFeeSummary,
+    current_month_completed_period,
     current_month_funding_fee_summary_from_database,
     current_month_funding_fee_summary_payload,
-    ensure_current_month_funding_fee_summaries,
+    date_range,
     ensure_daily_funding_fee_summary,
     ensure_previous_month_funding_fee_summary,
     funding_fee_summary_from_daily_model,
@@ -106,6 +108,19 @@ CUSTOM_URL_KEYS = {
     "rpcUrl",
     "rpc_url",
 }
+
+
+class DateLockRegistry:
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
+
+    def acquire(self, key: str, *, blocking: bool = False) -> threading.Lock | None:
+        with self._guard:
+            lock = self._locks.setdefault(key, threading.Lock())
+        if not lock.acquire(blocking=blocking):
+            return None
+        return lock
 
 
 def validate_onchain_public_config(config: dict[str, object]) -> None:
@@ -309,7 +324,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     channel_test_lock = threading.Lock()
     liquidation_monitor_lock = threading.Lock()
     monthly_funding_fee_lock = threading.Lock()
-    daily_funding_fee_lock = threading.Lock()
+    current_month_funding_fee_lock = threading.Lock()
+    daily_funding_fee_date_locks = DateLockRegistry()
 
     def get_schedule_times(session: Session) -> str:
         return json.loads(
@@ -417,7 +433,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 monthly_funding_fee_lock.release()
 
     def run_current_month_funding_fee_summary() -> None:
-        if not daily_funding_fee_lock.acquire(blocking=False):
+        if not current_month_funding_fee_lock.acquire(blocking=False):
             return
         with session_factory() as session:
             try:
@@ -428,22 +444,18 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 )
                 if not channels:
                     return
-                ensure_current_month_funding_fee_summaries(
+                ensure_current_month_funding_fee_summaries_with_date_locks(
                     session=session,
                     channels=channels,
-                    cipher=cipher,
-                    provider_builder=app.state.provider_builder,
                 )
                 session.commit()
             except Exception:
                 session.rollback()
                 logger.exception("api.current_month_funding_fees.startup_failed")
             finally:
-                daily_funding_fee_lock.release()
+                current_month_funding_fee_lock.release()
 
     def run_daily_funding_fee_increment() -> None:
-        if not daily_funding_fee_lock.acquire(blocking=False):
-            return
         with session_factory() as session:
             try:
                 yesterday = (datetime.now(UTC).astimezone(scheduler_timezone).date() - timedelta(days=1)).isoformat()
@@ -454,19 +466,65 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 )
                 if not channels:
                     return
-                ensure_daily_funding_fee_summary(
+                ensure_daily_funding_fee_summary_with_date_lock(
                     session=session,
                     date=yesterday,
                     channels=channels,
-                    cipher=cipher,
-                    provider_builder=app.state.provider_builder,
                 )
                 session.commit()
+            except HTTPException as exc:
+                session.rollback()
+                if exc.status_code != 409:
+                    raise
             except Exception:
                 session.rollback()
                 logger.exception("api.daily_funding_fees.increment_failed")
-            finally:
-                daily_funding_fee_lock.release()
+
+    def ensure_daily_funding_fee_summary_with_date_lock(
+        *,
+        session: Session,
+        date: str,
+        channels: list[Channel],
+    ) -> DailyFundingFeeSummary:
+        cached = session.scalar(
+            select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
+        )
+        if cached is not None:
+            return cached
+        date_lock = daily_funding_fee_date_locks.acquire(date, blocking=False)
+        if date_lock is None:
+            cached = session.scalar(
+                select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
+            )
+            if cached is not None:
+                return cached
+            raise HTTPException(status_code=409, detail="Daily funding fee summary is running")
+        try:
+            return ensure_daily_funding_fee_summary(
+                session=session,
+                date=date,
+                channels=channels,
+                cipher=cipher,
+                provider_builder=app.state.provider_builder,
+            )
+        finally:
+            date_lock.release()
+
+    def ensure_current_month_funding_fee_summaries_with_date_locks(
+        *,
+        session: Session,
+        channels: list[Channel],
+    ) -> CurrentMonthFundingFeeSummary:
+        now = datetime.now(UTC)
+        _, start_date, end_date = current_month_completed_period(now)
+        if end_date is not None:
+            for date in date_range(start_date, end_date):
+                ensure_daily_funding_fee_summary_with_date_lock(
+                    session=session,
+                    date=date,
+                    channels=channels,
+                )
+        return current_month_funding_fee_summary_from_database(session, now_factory=lambda: now)
 
     def scheduled_jobs_payload() -> list[dict[str, str]]:
         return [{"id": job.id, "trigger": str(job.trigger)} for job in scheduler.get_jobs()]
@@ -538,7 +596,8 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         app.state.channel_test_lock = channel_test_lock
         app.state.liquidation_monitor_lock = liquidation_monitor_lock
         app.state.monthly_funding_fee_lock = monthly_funding_fee_lock
-        app.state.daily_funding_fee_lock = daily_funding_fee_lock
+        app.state.current_month_funding_fee_lock = current_month_funding_fee_lock
+        app.state.daily_funding_fee_date_locks = daily_funding_fee_date_locks
         with session_factory() as session:
             ensure_admin_password(session, app_settings)
             configure_scheduler(get_scheduler_enabled(session), get_schedule_times(session))
@@ -932,23 +991,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         )
         logger.info("api.funding_fees.start date=%s enabled_channels=%s", date, len(channels))
         try:
-            cached = session.scalar(
-                select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
+            cached = ensure_daily_funding_fee_summary_with_date_lock(
+                session=session,
+                date=date,
+                channels=channels,
             )
-            if cached is None:
-                if not app.state.daily_funding_fee_lock.acquire(blocking=False):
-                    raise HTTPException(status_code=409, detail="Daily funding fee summary is running")
-                try:
-                    cached = ensure_daily_funding_fee_summary(
-                        session=session,
-                        date=date,
-                        channels=channels,
-                        cipher=cipher,
-                        provider_builder=app.state.provider_builder,
-                    )
-                    session.commit()
-                finally:
-                    app.state.daily_funding_fee_lock.release()
+            session.commit()
             summary = funding_fee_summary_from_daily_model(
                 cached,
                 recent_seven_days=recent_seven_day_summary_from_database(
@@ -992,7 +1040,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         _: object = Depends(require_session),
         session: Session = Depends(get_session),
     ):
-        if not app.state.daily_funding_fee_lock.acquire(blocking=False):
+        if not app.state.current_month_funding_fee_lock.acquire(blocking=False):
             summary = current_month_funding_fee_summary_from_database(session)
             return current_month_funding_fee_summary_payload(summary)
         try:
@@ -1002,17 +1050,15 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 )
             )
             if channels:
-                summary = ensure_current_month_funding_fee_summaries(
+                summary = ensure_current_month_funding_fee_summaries_with_date_locks(
                     session=session,
                     channels=channels,
-                    cipher=cipher,
-                    provider_builder=app.state.provider_builder,
                 )
                 session.commit()
             else:
                 summary = current_month_funding_fee_summary_from_database(session)
         finally:
-            app.state.daily_funding_fee_lock.release()
+            app.state.current_month_funding_fee_lock.release()
         return current_month_funding_fee_summary_payload(summary)
 
     @app.get("/api/funding-fees/monthly/previous")

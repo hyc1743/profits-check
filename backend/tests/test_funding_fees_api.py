@@ -173,6 +173,44 @@ def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) ->
     }
 
 
+def test_funding_fees_api_collects_daily_records_while_month_backfill_runs(client) -> None:
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=Decimal("1.25"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    assert client.app.state.current_month_funding_fee_lock.acquire(blocking=False)
+    try:
+        response = client.get("/api/funding-fees?date=2024-07-01")
+    finally:
+        client.app.state.current_month_funding_fee_lock.release()
+
+    assert response.status_code == 200
+    assert response.json()["net"] == "1.25000000"
+
+
 def test_monthly_funding_fee_summary_collects_previous_month_in_seven_day_segments(
     client,
 ) -> None:
