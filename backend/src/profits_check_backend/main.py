@@ -485,13 +485,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         session: Session,
         date: str,
         channels: list[Channel],
+        wait_for_running: bool = False,
     ) -> DailyFundingFeeSummary:
         cached = session.scalar(
             select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
         )
         if cached is not None:
             return cached
-        date_lock = daily_funding_fee_date_locks.acquire(date, blocking=False)
+        date_lock = daily_funding_fee_date_locks.acquire(date, blocking=wait_for_running)
         if date_lock is None:
             cached = session.scalar(
                 select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
@@ -500,13 +501,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 return cached
             raise HTTPException(status_code=409, detail="Daily funding fee summary is running")
         try:
-            return ensure_daily_funding_fee_summary(
+            cached = session.scalar(
+                select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
+            )
+            if cached is not None:
+                return cached
+            summary = ensure_daily_funding_fee_summary(
                 session=session,
                 date=date,
                 channels=channels,
                 cipher=cipher,
                 provider_builder=app.state.provider_builder,
             )
+            session.commit()
+            return summary
         finally:
             date_lock.release()
 
@@ -995,6 +1003,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 session=session,
                 date=date,
                 channels=channels,
+                wait_for_running=True,
             )
             session.commit()
             summary = funding_fee_summary_from_daily_model(

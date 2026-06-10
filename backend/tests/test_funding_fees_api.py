@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import UTC, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -209,6 +211,57 @@ def test_funding_fees_api_collects_daily_records_while_month_backfill_runs(clien
 
     assert response.status_code == 200
     assert response.json()["net"] == "1.25000000"
+
+
+def test_funding_fees_api_waits_for_in_flight_same_day_collection(client) -> None:
+    first_collection_started = threading.Event()
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            first_collection_started.set()
+            await asyncio.sleep(0.05)
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=Decimal("2.50"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    responses = []
+    first_request = threading.Thread(
+        target=lambda: responses.append(client.get("/api/funding-fees?date=2024-07-01"))
+    )
+    first_request.start()
+    assert first_collection_started.wait(timeout=2)
+
+    second_response = client.get("/api/funding-fees?date=2024-07-01")
+    first_request.join(timeout=2)
+
+    assert len(responses) == 1
+    assert responses[0].status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["net"] == "2.50000000"
+    assert len(calls) == 1
 
 
 def test_monthly_funding_fee_summary_collects_previous_month_in_seven_day_segments(
