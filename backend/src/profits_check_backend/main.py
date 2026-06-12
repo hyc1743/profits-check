@@ -531,6 +531,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                     session=session,
                     date=date,
                     channels=channels,
+                    wait_for_running=True,
                 )
         return current_month_funding_fee_summary_from_database(session, now_factory=lambda: now)
 

@@ -472,6 +472,62 @@ def test_current_monthly_funding_fees_collects_missing_days_once(client) -> None
     assert len(calls) == payload["expectedDays"]
 
 
+def test_current_monthly_funding_fees_waits_for_in_flight_daily_collection(client) -> None:
+    from profits_check_backend.services.funding_fees import current_month_completed_period
+
+    now = datetime.now(UTC)
+    _, start_date, end_date = current_month_completed_period(now)
+    if end_date is None:
+        return
+    _, _, start_time_ms, _ = date_bounds_ms(start_date)
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=Decimal("1"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    held_lock = client.app.state.daily_funding_fee_date_locks.acquire(
+        start_date,
+        blocking=False,
+    )
+    assert held_lock is not None
+    release_timer = threading.Timer(0.05, held_lock.release)
+    release_timer.start()
+    try:
+        response = client.get("/api/funding-fees/monthly/current")
+    finally:
+        release_timer.cancel()
+        if held_lock.locked():
+            held_lock.release()
+
+    assert response.status_code == 200
+    assert calls[0][0] == start_time_ms
+
+
 def test_daily_funding_fee_increment_job_is_scheduled(client) -> None:
     jobs = {job.id: str(job.trigger) for job in client.app.state.scheduler.get_jobs()}
 
