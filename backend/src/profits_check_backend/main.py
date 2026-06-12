@@ -616,7 +616,6 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             configure_funding_fee_scheduler()
         scheduler.start()
         threading.Thread(target=run_previous_month_funding_fee_summary, daemon=True).start()
-        threading.Thread(target=run_current_month_funding_fee_summary, daemon=True).start()
         yield
         scheduler.shutdown(wait=False)
 

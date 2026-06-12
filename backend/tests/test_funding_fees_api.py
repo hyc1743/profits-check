@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import threading
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -526,6 +528,138 @@ def test_current_monthly_funding_fees_waits_for_in_flight_daily_collection(clien
 
     assert response.status_code == 200
     assert calls[0][0] == start_time_ms
+
+
+def test_app_startup_collects_previous_month_once_and_skips_current_month_backfill(
+    tmp_path, monkeypatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from profits_check_backend.config import AppSettings
+    from profits_check_backend.db import build_session_factory, init_database
+    from profits_check_backend.main import create_app
+    from profits_check_backend.security import SecretCipher
+    from profits_check_backend.services.channels import create_channel
+    from profits_check_backend.services.funding_fees import previous_month_period
+
+    settings = AppSettings(
+        app_encryption_key=base64.urlsafe_b64encode(
+            b"0123456789ABCDEF0123456789ABCDEF"
+        ).decode(),
+        bootstrap_password="correct horse battery staple",
+        database_url=f"sqlite:///{tmp_path / 'startup.db'}",
+    )
+    session_factory = build_session_factory(settings)
+    init_database(session_factory)
+    cipher = SecretCipher.from_settings(settings)
+    with session_factory() as session:
+        create_channel(
+            session,
+            name="binance main",
+            provider="binance",
+            kind="cex",
+            enabled=True,
+            public_config={},
+            secret_config={"apiKey": "key", "apiSecret": "secret"},
+            cipher=cipher,
+        )
+        session.commit()
+
+    calls: list[str] = []
+    previous_month, _, _ = previous_month_period()
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append(f"{start_time_ms}:{end_time_ms}")
+            return []
+
+    monkeypatch.setattr(
+        "profits_check_backend.main.build_provider",
+        lambda **_: StubProvider(),
+    )
+
+    def wait_for_previous_month_summary() -> MonthlyFundingFeeSummary | None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with session_factory() as session:
+                summary = session.scalar(
+                    select(MonthlyFundingFeeSummary).where(
+                        MonthlyFundingFeeSummary.month == previous_month
+                    )
+                )
+                if summary is not None:
+                    return summary
+            time.sleep(0.02)
+        return None
+
+    with TestClient(create_app(settings)):
+        summary = wait_for_previous_month_summary()
+
+    assert summary is not None
+    first_startup_call_count = len(calls)
+    assert first_startup_call_count > 0
+    with session_factory() as session:
+        assert session.scalar(select(DailyFundingFeeSummary)) is None
+
+    with TestClient(create_app(settings)):
+        time.sleep(0.05)
+
+    assert len(calls) == first_startup_call_count
+
+
+def test_previous_monthly_funding_fee_summary_collects_channels_sequentially(client) -> None:
+    from profits_check_backend.services.funding_fees import (
+        ensure_previous_month_funding_fee_summary,
+    )
+
+    active_channels = 0
+    max_active_channels = 0
+    call_order: list[str] = []
+
+    class StubProvider:
+        def __init__(self, channel_name: str) -> None:
+            self.channel_name = channel_name
+
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            nonlocal active_channels, max_active_channels
+            active_channels += 1
+            max_active_channels = max(max_active_channels, active_channels)
+            call_order.append(self.channel_name)
+            await asyncio.sleep(0)
+            active_channels -= 1
+            return []
+
+    for provider in ("binance", "okx"):
+        response = client.post(
+            "/api/channels",
+            json={
+                "name": f"{provider} main",
+                "provider": provider,
+                "enabled": True,
+                "publicConfig": {},
+                "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+            },
+        )
+        assert response.status_code == 201
+
+    with client.app.state.session_factory() as session:
+        channels = list(
+            session.scalars(select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id))
+        )
+        ensure_previous_month_funding_fee_summary(
+            session=session,
+            channels=channels,
+            cipher=client.app.state.cipher,
+            provider_builder=lambda channel_name, **_: StubProvider(channel_name),
+            now_factory=lambda: datetime(2026, 6, 9, 8, tzinfo=UTC),
+        )
+
+    assert max_active_channels == 1
+    assert call_order == ["binance main"] * 5 + ["okx main"] * 5
 
 
 def test_daily_funding_fee_increment_job_is_scheduled(client) -> None:

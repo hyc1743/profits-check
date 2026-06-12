@@ -551,7 +551,9 @@ async def collect_monthly_funding_fee_records(
             )
             return MonthlyFundingFeeCollection(records=[], error=str(exc))
 
-    collections = await asyncio.gather(*(collect_channel(channel) for channel in channels))
+    collections: list[MonthlyFundingFeeCollection] = []
+    for channel in channels:
+        collections.append(await collect_channel(channel))
     records = [record for collection in collections for record in collection.records]
     errors = [collection.error for collection in collections if collection.error]
     return MonthlyFundingFeeCollection(records=records, error="; ".join(errors) if errors else None)
