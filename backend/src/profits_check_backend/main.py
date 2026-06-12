@@ -480,6 +480,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 session.rollback()
                 logger.exception("api.daily_funding_fees.increment_failed")
 
+    def run_startup_funding_fee_summaries() -> None:
+        run_previous_month_funding_fee_summary()
+        run_current_month_funding_fee_summary()
+
     def ensure_daily_funding_fee_summary_with_date_lock(
         *,
         session: Session,
@@ -615,7 +619,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             )
             configure_funding_fee_scheduler()
         scheduler.start()
-        threading.Thread(target=run_previous_month_funding_fee_summary, daemon=True).start()
+        threading.Thread(target=run_startup_funding_fee_summaries, daemon=True).start()
         yield
         scheduler.shutdown(wait=False)
 

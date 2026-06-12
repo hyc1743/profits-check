@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from profits_check_backend.models import Channel, DailyFundingFeeSummary, MonthlyFundingFeeSummary
 from profits_check_backend.providers.base import FundingFeeRecord
-from profits_check_backend.services.funding_fees import date_bounds_ms
+from profits_check_backend.services.funding_fees import date_bounds_ms, date_range
 
 
 def test_funding_fees_api_summarizes_daily_records(client) -> None:
@@ -264,6 +264,47 @@ def test_funding_fees_api_waits_for_in_flight_same_day_collection(client) -> Non
     assert second_response.status_code == 200
     assert second_response.json()["net"] == "2.50000000"
     assert len(calls) == 1
+
+
+def test_funding_fees_api_collects_daily_channels_sequentially(client) -> None:
+    active_channels = 0
+    max_active_channels = 0
+    call_order: list[str] = []
+
+    class StubProvider:
+        def __init__(self, channel_name: str) -> None:
+            self.channel_name = channel_name
+
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            nonlocal active_channels, max_active_channels
+            active_channels += 1
+            max_active_channels = max(max_active_channels, active_channels)
+            call_order.append(self.channel_name)
+            await asyncio.sleep(0)
+            active_channels -= 1
+            return []
+
+    client.app.state.provider_builder = lambda channel_name, **_: StubProvider(channel_name)
+    for provider in ("binance", "okx"):
+        response = client.post(
+            "/api/channels",
+            json={
+                "name": f"{provider} main",
+                "provider": provider,
+                "enabled": True,
+                "publicConfig": {},
+                "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+            },
+        )
+        assert response.status_code == 201
+
+    response = client.get("/api/funding-fees?date=2024-07-01")
+
+    assert response.status_code == 200
+    assert max_active_channels == 1
+    assert call_order == ["binance main", "okx main"]
 
 
 def test_monthly_funding_fee_summary_collects_previous_month_in_seven_day_segments(
@@ -530,7 +571,7 @@ def test_current_monthly_funding_fees_waits_for_in_flight_daily_collection(clien
     assert calls[0][0] == start_time_ms
 
 
-def test_app_startup_collects_previous_month_once_and_skips_current_month_backfill(
+def test_app_startup_collects_previous_month_and_current_month_missing_days_once(
     tmp_path, monkeypatch
 ) -> None:
     from fastapi.testclient import TestClient
@@ -540,7 +581,10 @@ def test_app_startup_collects_previous_month_once_and_skips_current_month_backfi
     from profits_check_backend.main import create_app
     from profits_check_backend.security import SecretCipher
     from profits_check_backend.services.channels import create_channel
-    from profits_check_backend.services.funding_fees import previous_month_period
+    from profits_check_backend.services.funding_fees import (
+        current_month_completed_period,
+        previous_month_period,
+    )
 
     settings = AppSettings(
         app_encryption_key=base64.urlsafe_b64encode(
@@ -565,14 +609,39 @@ def test_app_startup_collects_previous_month_once_and_skips_current_month_backfi
         )
         session.commit()
 
-    calls: list[str] = []
+    _, current_start_date, current_end_date = current_month_completed_period()
+    current_expected_days = (
+        len(date_range(current_start_date, current_end_date))
+        if current_end_date is not None
+        else 0
+    )
+    current_start_time, current_end_time, current_start_ms, current_end_ms = date_bounds_ms(
+        current_start_date
+    )
+    with session_factory() as session:
+        if current_expected_days:
+            session.add(
+                DailyFundingFeeSummary(
+                    date=current_start_date,
+                    start_time=current_start_time,
+                    end_time=current_end_time,
+                    received=Decimal("0"),
+                    paid=Decimal("0"),
+                    net=Decimal("0"),
+                    records_count=0,
+                    status="success",
+                )
+            )
+            session.commit()
+
+    calls: list[tuple[int, int]] = []
     previous_month, _, _ = previous_month_period()
 
     class StubProvider:
         async def collect_funding_fee_records(
             self, start_time_ms: int, end_time_ms: int
         ) -> list[FundingFeeRecord]:
-            calls.append(f"{start_time_ms}:{end_time_ms}")
+            calls.append((start_time_ms, end_time_ms))
             return []
 
     monkeypatch.setattr(
@@ -594,14 +663,36 @@ def test_app_startup_collects_previous_month_once_and_skips_current_month_backfi
             time.sleep(0.02)
         return None
 
+    def wait_for_current_month_days() -> int:
+        if current_end_date is None:
+            return 0
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with session_factory() as session:
+                count = len(
+                    list(
+                        session.scalars(
+                            select(DailyFundingFeeSummary)
+                            .where(DailyFundingFeeSummary.date >= current_start_date)
+                            .where(DailyFundingFeeSummary.date <= current_end_date)
+                        )
+                    )
+                )
+                if count == current_expected_days:
+                    return count
+            time.sleep(0.02)
+        return 0
+
     with TestClient(create_app(settings)):
         summary = wait_for_previous_month_summary()
+        cached_days = wait_for_current_month_days()
 
     assert summary is not None
     first_startup_call_count = len(calls)
     assert first_startup_call_count > 0
-    with session_factory() as session:
-        assert session.scalar(select(DailyFundingFeeSummary)) is None
+    assert cached_days == current_expected_days
+    if current_expected_days:
+        assert (current_start_ms, current_end_ms) not in calls
 
     with TestClient(create_app(settings)):
         time.sleep(0.05)

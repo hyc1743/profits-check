@@ -250,7 +250,9 @@ async def collect_daily_funding_fee_summary(
                 records=[],
             )
 
-    channel_collections = await asyncio.gather(*(collect_channel(channel) for channel in channels))
+    channel_collections: list[FundingFeeChannelCollection] = []
+    for channel in channels:
+        channel_collections.append(await collect_channel(channel))
     channel_summaries = [item.summary for item in channel_collections]
     received = sum((item.received for item in channel_summaries), Decimal("0"))
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
