@@ -377,6 +377,19 @@ def get_daily_funding_fee_summary(
     return session.scalar(select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date))
 
 
+def is_daily_funding_fee_summary_complete(summary: DailyFundingFeeSummary) -> bool:
+    created_at = summary.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    else:
+        created_at = created_at.astimezone(UTC)
+
+    end_time = summary.end_time
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=DATE_TIMEZONE)
+    return created_at >= end_time.astimezone(UTC)
+
+
 def summarize_daily_models(
     summaries: list[DailyFundingFeeSummary], *, start_date: str, end_date: str
 ) -> FundingFeePeriodSummary:
@@ -416,8 +429,11 @@ def ensure_daily_funding_fee_summary(
     provider_builder,
 ) -> DailyFundingFeeSummary:
     existing = get_daily_funding_fee_summary(session, date)
-    if existing is not None:
+    if existing is not None and is_daily_funding_fee_summary_complete(existing):
         return existing
+    if existing is not None:
+        session.delete(existing)
+        session.flush()
     summary = asyncio.run(
         collect_daily_funding_fee_summary(
             date=date,

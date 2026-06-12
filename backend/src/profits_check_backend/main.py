@@ -62,6 +62,7 @@ from profits_check_backend.services.funding_fees import (
     ensure_previous_month_funding_fee_summary,
     funding_fee_summary_from_daily_model,
     funding_fee_summary_payload,
+    is_daily_funding_fee_summary_complete,
     monthly_funding_fee_summary_payload,
     previous_month_period,
     recent_seven_day_summary_from_database,
@@ -494,21 +495,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         cached = session.scalar(
             select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
         )
-        if cached is not None:
+        if cached is not None and is_daily_funding_fee_summary_complete(cached):
             return cached
         date_lock = daily_funding_fee_date_locks.acquire(date, blocking=wait_for_running)
         if date_lock is None:
             cached = session.scalar(
                 select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
             )
-            if cached is not None:
+            if cached is not None and is_daily_funding_fee_summary_complete(cached):
                 return cached
             raise HTTPException(status_code=409, detail="Daily funding fee summary is running")
         try:
             cached = session.scalar(
                 select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
             )
-            if cached is not None:
+            if cached is not None and is_daily_funding_fee_summary_complete(cached):
                 return cached
             summary = ensure_daily_funding_fee_summary(
                 session=session,

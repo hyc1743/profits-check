@@ -177,6 +177,71 @@ def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) ->
     }
 
 
+def test_funding_fees_api_refreshes_partial_cache_created_before_day_closed(client) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="binance main",
+                    amount=Decimal("204.03602356"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "binance main",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    start_time, end_time, start_ms, end_ms = date_bounds_ms("2024-07-01")
+    with client.app.state.session_factory() as session:
+        session.add(
+            DailyFundingFeeSummary(
+                date="2024-07-01",
+                start_time=start_time,
+                end_time=end_time,
+                received=Decimal("1"),
+                paid=Decimal("0"),
+                net=Decimal("1"),
+                records_count=1,
+                status="success",
+                created_at=start_time,
+                updated_at=start_time,
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/funding-fees?date=2024-07-01")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["net"] == "204.03602356"
+    assert payload["recordsCount"] == 1
+    assert calls == [(start_ms, end_ms)]
+
+    with client.app.state.session_factory() as session:
+        cached = session.scalar(
+            select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == "2024-07-01")
+        )
+        assert cached is not None
+        assert cached.net == Decimal("204.03602356")
+
+
 def test_funding_fees_api_collects_daily_records_while_month_backfill_runs(client) -> None:
     class StubProvider:
         async def collect_funding_fee_records(
