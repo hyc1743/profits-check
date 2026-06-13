@@ -406,6 +406,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [showAssetCalendar, setShowAssetCalendar] = useState(false)
   const [showProfitCalendar, setShowProfitCalendar] = useState(false)
   const [showFundingFees, setShowFundingFees] = useState(false)
+  const [showLiquidationRisk, setShowLiquidationRisk] = useState(false)
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
   const [selectedFundingDate, setSelectedFundingDate] = useState(getCurrentDateKey)
@@ -944,6 +945,16 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             <button
               type="button"
               className="button button-ghost"
+              id="risk"
+              aria-expanded={showLiquidationRisk}
+              aria-controls="liquidation-risk-panel"
+              onClick={() => setShowLiquidationRisk((current) => !current)}
+            >
+              爆仓风险
+            </button>
+            <button
+              type="button"
+              className="button button-ghost"
               aria-expanded={showFundingFees}
               onClick={() => setShowFundingFees((current) => !current)}
             >
@@ -1145,7 +1156,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             ) : null}
           </div>
 
-          {liquidationMonitorQuery.data ? (
+          {showLiquidationRisk && liquidationMonitorQuery.data ? (
             <LiquidationRiskPanel
               monitor={liquidationMonitorQuery.data}
               isRefreshing={isManualLiquidationRefreshPending}
@@ -1605,7 +1616,7 @@ function LiquidationRiskPanel({
   const [activeView, setActiveView] = useState<'position' | 'margin' | 'adl'>('position')
 
   return (
-    <div className="liquidation-block" id="risk">
+    <div className="liquidation-block" id="liquidation-risk-panel">
       <div className="asset-totals-head">
         <h3>爆仓风险</h3>
         <span>
@@ -1756,7 +1767,6 @@ function FundingFeePanel({
   monthlyError?: string
   onDateChange: (value: string) => void
 }) {
-  const channels = summary?.channels ?? []
   const recentSevenDays = summary?.recentSevenDays
   const isMonthlyRunning = monthlySummary?.status === 'running'
 
@@ -1835,33 +1845,8 @@ function FundingFeePanel({
           <Metric label="7 天净资金费" value={formatUsd(recentSevenDays?.net ?? '0')} />
         </div>
       </div>
-      <div className="funding-channel-list" role="list" aria-label="渠道资金费明细">
-        {channels.length > 0 ? (
-          channels.map((channel) => (
-            <div key={channel.channelId} className={`funding-channel-row status-${channel.status}`} role="listitem">
-              <div>
-                <strong>{channel.channelName}</strong>
-                <span>{`${humanizeProvider(channel.provider)} · ${fundingStatusText(channel.status)} · ${channel.recordsCount} 条`}</span>
-                {channel.error ? <em>{channel.error}</em> : null}
-              </div>
-              <b>{formatUsd(channel.received)}</b>
-              <b>{formatUsd(channel.paid)}</b>
-              <strong>{formatUsd(channel.net)}</strong>
-            </div>
-          ))
-        ) : (
-          <p className="empty-copy">暂无资金费记录。</p>
-        )}
-      </div>
     </div>
   )
-}
-
-function fundingStatusText(value: string) {
-  if (value === 'success') return '已统计'
-  if (value === 'disabled') return '已停用'
-  if (value === 'failed') return '失败'
-  return value
 }
 
 function ChannelList({

@@ -321,6 +321,7 @@ test('shows recent seven day funding fee totals', async () => {
   expect(screen.getByText('3.75 USD')).toBeInTheDocument()
   expect(screen.getByText('7 天净资金费')).toBeInTheDocument()
   expect(screen.getAllByText('15.50 USD').length).toBeGreaterThan(0)
+  expect(screen.queryByLabelText('渠道资金费明细')).not.toBeInTheDocument()
 })
 
 test('shows previous monthly funding fee collection as running', async () => {
@@ -568,8 +569,12 @@ test('shows liquidation risk positions without refreshing on initial dashboard l
 
   render(<App />)
 
-  expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '爆仓风险' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: '爆仓风险' })).not.toBeInTheDocument()
   expect(refreshCount).toBe(0)
+  await user.click(screen.getByRole('button', { name: '爆仓风险' }))
+
+  expect(await screen.findByRole('heading', { name: '爆仓风险' })).toBeInTheDocument()
   expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
   expect(screen.getByText('0%')).toBeInTheDocument()
   expect(screen.queryByText('0.1721%')).not.toBeInTheDocument()
@@ -579,6 +584,9 @@ test('shows liquidation risk positions without refreshing on initial dashboard l
 
   await user.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
   await waitFor(() => expect(refreshCount).toBe(1))
+
+  await user.click(screen.getByRole('button', { name: '爆仓风险' }))
+  expect(screen.queryByRole('heading', { name: '爆仓风险' })).not.toBeInTheDocument()
 })
 
 test('shows pending state only while manual liquidation refresh is pending', async () => {
@@ -595,7 +603,10 @@ test('shows pending state only while manual liquidation refresh is pending', asy
 
   render(<App />)
 
-  expect(await screen.findByText('爆仓风险')).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '爆仓风险' })).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: '爆仓风险' }))
+
+  expect(await screen.findByRole('heading', { name: '爆仓风险' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '刷新爆仓风险' })).toBeEnabled()
 
   await userEvent.click(screen.getByRole('button', { name: '刷新爆仓风险' }))
@@ -611,6 +622,7 @@ test('switches liquidation risk panel to margin balance risk by channel', async 
 
   render(<App />)
 
+  await user.click(await screen.findByRole('button', { name: '爆仓风险' }))
   expect(await screen.findByRole('button', { name: '仓位风险' })).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '保证金余额' }))
 
@@ -628,6 +640,7 @@ test('switches liquidation risk panel to suspected ADL events', async () => {
 
   render(<App />)
 
+  await user.click(await screen.findByRole('button', { name: '爆仓风险' }))
   expect(await screen.findByRole('button', { name: 'ADL 检测' })).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'ADL 检测' }))
 
@@ -663,6 +676,7 @@ test('shows infinity and no-risk copy when liquidation price is unavailable', as
 
   render(<App />)
 
+  await userEvent.click(await screen.findByRole('button', { name: '爆仓风险' }))
   expect(await screen.findByText('主账户 · BTCUSDT')).toBeInTheDocument()
   expect(screen.getByText('BOTH · 无爆仓风险')).toBeInTheDocument()
   expect(screen.getAllByText('∞')).toHaveLength(2)

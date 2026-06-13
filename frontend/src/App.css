@@ -385,8 +385,7 @@
 
 .channel-share-row,
 .account-row,
-.risk-row,
-.funding-channel-row {
+.risk-row {
   border-bottom: 1px solid var(--border-faint);
 }
 
@@ -416,9 +415,6 @@
 .account-row strong,
 .account-row span,
 .channel-share-row strong,
-.funding-channel-row strong,
-.funding-channel-row span,
-.funding-channel-row em,
 .risk-row strong,
 .risk-row span,
 .snapshot-copy span {
@@ -436,11 +432,6 @@
 
 .funding-date-field {
   width: min(100%, 12rem);
-}
-
-.funding-channel-list {
-  display: grid;
-  gap: 0.25rem;
 }
 
 .funding-recent-block {
@@ -463,44 +454,6 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.45rem;
-}
-
-.funding-channel-row {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1fr) repeat(3, minmax(6.5rem, auto));
-  gap: 0.8rem;
-  align-items: center;
-  padding: 0.85rem 0;
-}
-
-.funding-channel-row div {
-  display: grid;
-  gap: 0.12rem;
-  min-width: 0;
-}
-
-.funding-channel-row span,
-.funding-channel-row em {
-  color: var(--text-soft);
-  font-size: 0.78rem;
-  font-style: normal;
-}
-
-.funding-channel-row em {
-  color: var(--danger-strong);
-}
-
-.funding-channel-row b,
-.funding-channel-row > strong {
-  color: var(--ink);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.funding-channel-row.status-failed > strong {
-  color: var(--danger-strong);
 }
 
 .risk-tabs {
@@ -1134,15 +1087,12 @@ details[open] summary::before {
   .account-row,
   .channel-share-row,
   .risk-row,
-  .funding-channel-row,
   .channel-card {
     grid-template-columns: 1fr;
     gap: 0.35rem;
   }
 
-  .risk-alert,
-  .funding-channel-row b,
-  .funding-channel-row > strong {
+  .risk-alert {
     justify-self: start;
     text-align: left;
   }
