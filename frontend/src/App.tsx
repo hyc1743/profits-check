@@ -84,9 +84,9 @@ type LiquidationMonitorFormValues = z.output<typeof liquidationMonitorSchema>
 
 const calendarWeekdays = ['日', '一', '二', '三', '四', '五', '六']
 const fallbackChartPalette = {
-  accent: '#b53624',
-  accentSoft: 'rgba(181,54,36,0.25)',
-  accentFaint: 'rgba(181,54,36,0.02)',
+  accent: '#d64933',
+  accentSoft: 'rgba(214,73,51,0.25)',
+  accentFaint: 'rgba(214,73,51,0.02)',
   ink: '#1a1814',
 }
 

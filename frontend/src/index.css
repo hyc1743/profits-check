@@ -3,13 +3,7 @@
   line-height: 1.5;
   font-weight: 400;
   color: var(--ink);
-  background:
-    linear-gradient(rgba(26, 24, 20, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(26, 24, 20, 0.03) 1px, transparent 1px),
-    radial-gradient(circle at 14% 8%, rgba(242, 193, 78, 0.32), transparent 24rem),
-    radial-gradient(circle at 84% 12%, rgba(46, 139, 107, 0.18), transparent 28rem),
-    var(--paper);
-  background-size: 42px 42px, 42px 42px, auto, auto, auto;
+  background: var(--paper);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -28,7 +22,7 @@
   --surface-raised: #fbfbfa;
   --surface-empty: rgba(251, 251, 250, 0.46);
   --surface-settings-panel: rgba(251, 251, 250, 0.7);
-  --surface-hover: #f8f1df;
+  --surface-hover: rgba(0, 0, 0, 0.04);
 
   --ink: #1a1814;
   --ink-2: #3d3830;
@@ -39,19 +33,20 @@
   --line: #1a1814;
   --line-soft: rgba(26, 24, 20, 0.25);
   --accent: #d64933;
-  --accent-strong: #b53624;
-  --accent-text: #b53624;
+  --accent-strong: var(--accent);
+  --accent-text: var(--accent);
   --accent-2: #2e8b6b;
-  --positive: #2e8b6b;
-  --positive-strong: #1f6f55;
-  --positive-text: #1f6f55;
-  --info: #7a5fbd;
-  --warning: #c77c2f;
-  --warning-text: #8b5419;
-  --danger: #d64933;
-  --danger-strong: #b53624;
+  --positive: var(--accent-2);
+  --positive-strong: var(--accent-2);
+  --positive-text: var(--accent-2);
+  --info: var(--purple);
+  --warning: var(--yellow);
+  --warning-text: var(--ink-2);
+  --danger: var(--accent);
+  --danger-strong: var(--accent);
   --yellow: #f2c14e;
   --purple: #7a5fbd;
+  --hand: 'Kalam', 'Caveat', cursive;
 
   --border-strong: var(--line);
   --border-subtle: var(--line);
@@ -65,12 +60,12 @@
 
   --glow-gold: rgba(242, 193, 78, 0.36);
   --glow-green: rgba(46, 139, 107, 0.18);
-  --topbar-gradient: linear-gradient(180deg, rgba(251, 251, 250, 0.96), rgba(251, 251, 250, 0.86));
-  --panel-gradient: linear-gradient(180deg, rgba(251, 251, 250, 0.98), rgba(244, 244, 242, 0.82));
-  --rail-gradient: linear-gradient(180deg, rgba(251, 251, 250, 0.96), rgba(234, 234, 232, 0.88));
-  --hero-card-gradient: linear-gradient(180deg, rgba(251, 251, 250, 0.98), rgba(242, 193, 78, 0.16));
+  --topbar-gradient: linear-gradient(180deg, #fbfbfa, #fbfbfa);
+  --panel-gradient: linear-gradient(180deg, #fbfbfa, #fbfbfa);
+  --rail-gradient: linear-gradient(180deg, #fbfbfa, #fbfbfa);
+  --hero-card-gradient: linear-gradient(180deg, #fbfbfa, #fbfbfa);
   --hero-button-gradient: linear-gradient(180deg, #1a1814, #2a2620);
-  --ghost-gradient: linear-gradient(180deg, #fbfbfa, #f4f4f2);
+  --ghost-gradient: linear-gradient(180deg, #fbfbfa, #fbfbfa);
   --contrast-on-danger: #fbfbfa;
 
   --radius-sm: 6px;
@@ -85,13 +80,7 @@
 
 :root[data-theme='dark'] {
   color: var(--ink);
-  background:
-    linear-gradient(rgba(251, 251, 250, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(251, 251, 250, 0.025) 1px, transparent 1px),
-    radial-gradient(circle at 12% 10%, rgba(214, 73, 51, 0.2), transparent 24rem),
-    radial-gradient(circle at 86% 12%, rgba(46, 139, 107, 0.18), transparent 28rem),
-    #161511;
-  background-size: 42px 42px, 42px 42px, auto, auto, auto;
+  background: #161511;
 
   --paper: #161511;
   --paper-2: #24211c;
@@ -115,18 +104,20 @@
   --muted: #8f877b;
   --line: #f4f4f2;
   --line-soft: rgba(244, 244, 242, 0.25);
-  --accent: #ff9b84;
-  --accent-strong: #ff9b84;
-  --accent-text: #ff9b84;
-  --accent-2: #8dd8bd;
-  --positive: #8dd8bd;
-  --positive-strong: #8dd8bd;
-  --positive-text: #8dd8bd;
-  --info: #c6b7ff;
-  --warning: #f2c14e;
-  --warning-text: #f2c14e;
-  --danger: #ff856d;
-  --danger-strong: #ff856d;
+  --accent: #d64933;
+  --accent-strong: var(--accent);
+  --accent-text: var(--accent);
+  --accent-2: #2e8b6b;
+  --positive: var(--accent-2);
+  --positive-strong: var(--accent-2);
+  --positive-text: var(--accent-2);
+  --info: var(--purple);
+  --warning: var(--yellow);
+  --warning-text: var(--ink-2);
+  --danger: var(--accent);
+  --danger-strong: var(--accent);
+  --yellow: #f2c14e;
+  --purple: #7a5fbd;
   --border-faint: rgba(244, 244, 242, 0.22);
   --hero-button-gradient: linear-gradient(180deg, #f4f4f2, #d7d1c7);
   --contrast-on-danger: #1a1814;
