@@ -1,14 +1,5 @@
+/* ── Design tokens ───────────────────────────────────────── */
 :root {
-  font-family: var(--mono);
-  line-height: 1.5;
-  font-weight: 400;
-  color: var(--ink);
-  background: var(--paper);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
   --paper: #f4f4f2;
   --paper-2: #eaeae8;
   --surface-card: #fbfbfa;
@@ -76,6 +67,16 @@
 
   --head: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  font-family: var(--mono);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 :root[data-theme='dark'] {
@@ -123,6 +124,10 @@
   --contrast-on-danger: #1a1814;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -131,10 +136,6 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-}
-
-* {
-  box-sizing: border-box;
 }
 
 button,
