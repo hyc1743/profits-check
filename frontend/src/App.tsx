@@ -2215,10 +2215,10 @@ function ChannelForm({
           </Field>
           {isOnChain ? (
             <fieldset className="chain-picker">
-              <legend>EVM 链</legend>
+              <legend>Supported networks</legend>
               {onchainChainsQuery.isError ? (
                 <p className="field-error" role="alert">
-                  EVM 链列表加载失败。
+                  Network list failed to load.
                 </p>
               ) : null}
               <div className="chain-picker-grid">

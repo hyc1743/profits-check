@@ -19,8 +19,9 @@ from profits_check_backend.providers.http import provider_http_client
 
 OKX_DEX_BASE_URL = "https://web3.okx.com"
 TOKEN_ASSET_TYPE = "1"
-DEFAULT_EVM_CHAIN_INDEXES = {"1", "56"}
-EVM_CHAIN_INDEXES = {
+DEFAULT_ONCHAIN_CHAIN_INDEXES = {"1", "56"}
+SUPPORTED_ONCHAIN_CHAIN_INDEXES = {
+    "0",
     "1",
     "10",
     "56",
@@ -109,7 +110,7 @@ class OnChainProvider(Provider):
             ]
         unique_indexes = list(dict.fromkeys(indexes))
         if not unique_indexes:
-            return sorted(DEFAULT_EVM_CHAIN_INDEXES)
+            return sorted(DEFAULT_ONCHAIN_CHAIN_INDEXES)
         return unique_indexes
 
     async def collect_snapshot(self) -> ProviderSnapshot:
@@ -165,7 +166,7 @@ def _extract_total_value(payload: dict[str, Any]) -> Decimal:
     return Decimal("0")
 
 
-async def collect_supported_evm_chains(
+async def collect_supported_onchain_chains(
     secrets: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
     provider = OnChainProvider(channel_name="onchain", config={}, secrets=dict(secrets or {}))
@@ -182,7 +183,7 @@ async def collect_supported_evm_chains(
     chains = []
     for item in payload.get("data", []):
         chain_index = str(item.get("chainIndex", ""))
-        if chain_index not in EVM_CHAIN_INDEXES:
+        if chain_index not in SUPPORTED_ONCHAIN_CHAIN_INDEXES:
             continue
         chain_name = str(item.get("chainName", item.get("name", chain_index)))
         short_name = str(item.get("shortName", chain_name))
@@ -191,7 +192,7 @@ async def collect_supported_evm_chains(
                 "chainIndex": chain_index,
                 "chainName": chain_name,
                 "shortName": short_name,
-                "defaultSelected": chain_index in DEFAULT_EVM_CHAIN_INDEXES,
+                "defaultSelected": chain_index in DEFAULT_ONCHAIN_CHAIN_INDEXES,
             }
         )
     return chains

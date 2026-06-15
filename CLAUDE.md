@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Profits Check is a portfolio asset tracking application — connect crypto exchange accounts (CEX) and EVM on-chain wallets, take snapshots, and view aggregated balances across channels in a single dashboard.
+Profits Check is a portfolio asset tracking application — connect crypto exchange accounts (CEX) and on-chain wallets, take snapshots, and view aggregated balances across channels in a single dashboard.
 
 ## Development Commands
 
@@ -61,7 +61,7 @@ backend/src/profits_check_backend/
 │   ├── registry.py      # build_provider() factory — maps ProviderType → provider class
 │   ├── binance.py       # Binance spot account via REST API
 │   ├── gate.py, okx.py, bitget.py, bybit.py, aster.py  # Other CEX adapters
-│   ├── onchain.py       # EVM on-chain wallet token total value via OKX DEX API
+│   ├── onchain.py       # On-chain wallet token total value via OKX DEX API
 │   └── placeholders.py  # Fallback for unknown provider types
 └── services/
     ├── channels.py      # Channel CRUD, config encryption/decryption, AppSetting helpers

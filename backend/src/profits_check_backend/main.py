@@ -30,7 +30,7 @@ from profits_check_backend.models import (
     Snapshot,
     SnapshotAsset,
 )
-from profits_check_backend.providers.onchain import collect_supported_evm_chains
+from profits_check_backend.providers.onchain import collect_supported_onchain_chains
 from profits_check_backend.providers.registry import build_provider
 from profits_check_backend.security import (
     PASSWORD_SETTING_KEY,
@@ -132,7 +132,7 @@ def validate_onchain_public_config(config: dict[str, object]) -> None:
     ):
         raise ValueError("At least one wallet address is required")
     if not isinstance(chain_indexes, list) or not any(str(item).strip() for item in chain_indexes):
-        raise ValueError("At least one EVM chain is required")
+        raise ValueError("At least one on-chain network is required")
 
 
 class LoginPayload(BaseModel):
@@ -459,7 +459,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     def run_daily_funding_fee_increment() -> None:
         with session_factory() as session:
             try:
-                yesterday = (datetime.now(UTC).astimezone(scheduler_timezone).date() - timedelta(days=1)).isoformat()
+                yesterday = (
+                    datetime.now(UTC).astimezone(scheduler_timezone).date() - timedelta(days=1)
+                ).isoformat()
                 channels = list(
                     session.scalars(
                         select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
@@ -718,9 +720,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         _: object = Depends(require_session), session: Session = Depends(get_session)
     ):
         try:
-            return asyncio.run(collect_supported_evm_chains(_get_okx_dex_secrets(session, cipher)))
+            return asyncio.run(
+                collect_supported_onchain_chains(_get_okx_dex_secrets(session, cipher))
+            )
         except Exception as exc:
-            raise HTTPException(status_code=400, detail="Failed to load EVM chains") from exc
+            raise HTTPException(status_code=400, detail="Failed to load on-chain networks") from exc
 
     @app.post("/api/channels", status_code=201)
     def post_channel(
@@ -1016,7 +1020,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 recent_seven_days=recent_seven_day_summary_from_database(
                     session,
                     date,
-                )
+                ),
             )
         except ValueError as exc:
             duration_ms = int((time.perf_counter() - started_at) * 1000)

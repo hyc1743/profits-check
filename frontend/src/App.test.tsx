@@ -123,6 +123,7 @@ const channelsPayload = [
 ]
 
 const onchainChainsPayload = [
+  { chainIndex: '0', chainName: 'Bitcoin', shortName: 'BTC', defaultSelected: false },
   { chainIndex: '1', chainName: 'Ethereum', shortName: 'ETH', defaultSelected: true },
   { chainIndex: '56', chainName: 'BNB Smart Chain', shortName: 'BSC', defaultSelected: true },
   { chainIndex: '137', chainName: 'Polygon', shortName: 'POL', defaultSelected: false },
@@ -898,7 +899,7 @@ test('switches channel form fields for onchain and runs manual snapshot', async 
   })
 })
 
-test('saves onchain channel with selected EVM chains and no BSC provider option', async () => {
+test('saves onchain channel with selected networks including Bitcoin and no BSC provider option', async () => {
   installHandlers()
   const createdPayloads: Array<Record<string, unknown>> = []
   server.use(
@@ -919,8 +920,10 @@ test('saves onchain channel with selected EVM chains and no BSC provider option'
   await user.type(screen.getByLabelText('名称'), 'EVM Wallets')
   await user.selectOptions(providerSelect, 'onchain')
   await user.type(screen.getByLabelText('钱包地址'), '0x1111111111111111111111111111111111111111')
+  expect(await screen.findByRole('checkbox', { name: /Bitcoin/ })).not.toBeChecked()
   expect(await screen.findByRole('checkbox', { name: /Ethereum/ })).toBeChecked()
   expect(screen.getByRole('checkbox', { name: /BNB Smart Chain/ })).toBeChecked()
+  await user.click(screen.getByRole('checkbox', { name: /Bitcoin/ }))
   await user.click(screen.getByRole('checkbox', { name: /Polygon/ }))
   await user.click(screen.getByRole('button', { name: '保存渠道' }))
 
@@ -931,10 +934,12 @@ test('saves onchain channel with selected EVM chains and no BSC provider option'
     name: 'EVM Wallets',
     publicConfig: {
       walletAddresses: ['0x1111111111111111111111111111111111111111'],
-      chainIndexes: ['1', '56', '137'],
     },
     secretConfig: {},
   })
+  const publicConfig = createdPayloads[0].publicConfig as { chainIndexes: string[] }
+  expect(publicConfig.chainIndexes).toHaveLength(4)
+  expect(publicConfig.chainIndexes).toEqual(expect.arrayContaining(['0', '1', '56', '137']))
 })
 
 test('allows Aster channels to save wallet and API wallet credentials', async () => {

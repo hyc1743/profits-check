@@ -18,7 +18,7 @@ def test_rejects_legacy_bsc_provider(client) -> None:
     assert response.status_code == 422
 
 
-def test_get_onchain_chains_returns_only_evm_supported_chains(client, httpx_mock) -> None:
+def test_get_onchain_chains_returns_supported_onchain_networks(client, httpx_mock) -> None:
     client.put(
         "/api/schedule",
         json={
@@ -40,6 +40,7 @@ def test_get_onchain_chains_returns_only_evm_supported_chains(client, httpx_mock
                 "code": "0",
                 "msg": "success",
                 "data": [
+                    {"chainIndex": "0", "name": "Bitcoin", "shortName": "BTC"},
                     {"chainIndex": "1", "name": "Ethereum", "shortName": "ETH"},
                     {"chainIndex": "56", "name": "BNB Smart Chain", "shortName": "BSC"},
                     {"chainIndex": "501", "name": "Solana", "shortName": "SOL"},
@@ -57,6 +58,12 @@ def test_get_onchain_chains_returns_only_evm_supported_chains(client, httpx_mock
 
     assert response.status_code == 200
     assert response.json() == [
+        {
+            "chainIndex": "0",
+            "chainName": "Bitcoin",
+            "shortName": "BTC",
+            "defaultSelected": False,
+        },
         {
             "chainIndex": "1",
             "chainName": "Ethereum",
