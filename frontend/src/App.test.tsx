@@ -291,25 +291,25 @@ test('shows recent seven day funding fee totals', async () => {
 
   render(<App />)
 
-  expect(await screen.findByRole('button', { name: '资费统计' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '资金费统计' })).toBeInTheDocument()
   expect(screen.queryByLabelText('资金费统计')).not.toBeInTheDocument()
 
-  await user.click(screen.getByRole('button', { name: '资费统计' }))
+  await user.click(screen.getByRole('button', { name: '资金费统计' }))
 
   expect(await screen.findByLabelText('资金费统计')).toBeInTheDocument()
-  expect(await screen.findByText('当月资费')).toBeInTheDocument()
+  expect(await screen.findByText('当月资金费')).toBeInTheDocument()
   expect(screen.getByText('2026-06 · 8/8 天')).toBeInTheDocument()
-  expect(screen.getByText('当月资费收入')).toBeInTheDocument()
+  expect(screen.getByText('当月资金费收入')).toBeInTheDocument()
   expect(screen.getAllByText('15.50 USD').length).toBeGreaterThan(0)
-  expect(screen.getByText('当月资费付出')).toBeInTheDocument()
+  expect(screen.getByText('当月资金费付出')).toBeInTheDocument()
   expect(screen.getByText('4.00 USD')).toBeInTheDocument()
   expect(screen.getByText('当月净费')).toBeInTheDocument()
   expect(screen.getByText('11.50 USD')).toBeInTheDocument()
-  expect(await screen.findByText('上月资费')).toBeInTheDocument()
+  expect(await screen.findByText('上月资金费')).toBeInTheDocument()
   expect(screen.getByText('2026-05 · 18 条')).toBeInTheDocument()
-  expect(screen.getByText('月度资费收入')).toBeInTheDocument()
+  expect(screen.getByText('月度资金费收入')).toBeInTheDocument()
   expect(screen.getByText('42.50 USD')).toBeInTheDocument()
-  expect(screen.getByText('月度资费付出')).toBeInTheDocument()
+  expect(screen.getByText('月度资金费付出')).toBeInTheDocument()
   expect(screen.getByText('8.25 USD')).toBeInTheDocument()
   expect(screen.getByText('月度净费')).toBeInTheDocument()
   expect(screen.getByText('34.25 USD')).toBeInTheDocument()
@@ -342,7 +342,7 @@ test('shows previous monthly funding fee collection as running', async () => {
 
   render(<App />)
 
-  await user.click(await screen.findByRole('button', { name: '资费统计' }))
+  await user.click(await screen.findByRole('button', { name: '资金费统计' }))
 
   expect(await screen.findByText('2026-05 · 统计中')).toBeInTheDocument()
   expect(screen.queryByText('Monthly funding fee summary is already running')).not.toBeInTheDocument()
@@ -455,11 +455,19 @@ test('renders dashboard data and latest snapshot detail', async () => {
   expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
   expect(screen.getAllByText('总资产').length).toBeGreaterThan(0)
   expect(screen.queryByText('点击刷新')).not.toBeInTheDocument()
-  expect(screen.getByText('按账户类别')).toBeInTheDocument()
   expect(screen.getByText('资产走势')).toBeInTheDocument()
-  expect(screen.getByText('资产分布')).toBeInTheDocument()
-  expect(screen.getByText('渠道占比与账户类别。')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '资产分布' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '分布' })).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByRole('heading', { name: '资产分布' })).not.toBeInTheDocument()
   expect(screen.getByRole('table', { name: '资产走势数据' })).toBeInTheDocument()
+
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '分布' }))
+
+  expect(screen.getByRole('button', { name: '分布' })).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByRole('heading', { name: '资产分布' })).toBeInTheDocument()
+  expect(screen.getByText('渠道占比与账户类别。')).toBeInTheDocument()
+  expect(screen.getByText('按账户类别')).toBeInTheDocument()
   expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
   expect(screen.getByText('EVM Wallets · 链上代币总估值')).not.toBeVisible()
 
@@ -479,13 +487,13 @@ test('defaults to light theme and toggles theme from the top bar', async () => {
 
   render(<App />)
 
-  expect(await screen.findByRole('button', { name: 'Dark mode' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '深色模式' })).toBeInTheDocument()
   expect(document.documentElement).toHaveAttribute('data-theme', 'light')
 
-  await user.click(screen.getByRole('button', { name: 'Dark mode' }))
+  await user.click(screen.getByRole('button', { name: '深色模式' }))
 
   expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
-  expect(screen.getByRole('button', { name: 'Light mode' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '浅色模式' })).toBeInTheDocument()
 })
 
 test('keeps asset distribution details collapsed until opened', async () => {
@@ -495,6 +503,11 @@ test('keeps asset distribution details collapsed until opened', async () => {
   render(<App />)
 
   expect((await screen.findAllByText('4025.00 USD')).length).toBeGreaterThan(0)
+  expect(screen.queryByRole('heading', { name: '资产分布' })).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '资产分布' }))
+
+  expect(screen.getByRole('heading', { name: '资产分布' })).toBeInTheDocument()
   expect(screen.getByRole('list', { name: '渠道占比数据' })).not.toBeVisible()
   expect(screen.getByText('EVM Wallets · 链上代币总估值')).not.toBeVisible()
 
@@ -507,6 +520,10 @@ test('keeps asset distribution details collapsed until opened', async () => {
   await user.click(screen.getByText('按账户类别'))
 
   expect(screen.getByText('EVM Wallets · 链上代币总估值')).toBeVisible()
+
+  await user.click(screen.getByRole('button', { name: '资产分布' }))
+
+  expect(screen.queryByRole('heading', { name: '资产分布' })).not.toBeInTheDocument()
 })
 
 test('live refresh shows account categories', async () => {
@@ -516,6 +533,7 @@ test('live refresh shows account categories', async () => {
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '刷新资产' }))
+  await user.click(screen.getByRole('button', { name: '资产分布' }))
 
   expect(screen.getByText('主账户 · 现货')).toBeInTheDocument()
   expect(screen.getByText('主账户 · 合约')).toBeInTheDocument()
@@ -570,11 +588,14 @@ test('shows liquidation risk positions without refreshing on initial dashboard l
   render(<App />)
 
   expect(await screen.findByRole('button', { name: '爆仓风险' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '风险' })).toHaveAttribute('aria-expanded', 'false')
   expect(screen.queryByRole('heading', { name: '爆仓风险' })).not.toBeInTheDocument()
   expect(refreshCount).toBe(0)
-  await user.click(screen.getByRole('button', { name: '爆仓风险' }))
+  await user.click(screen.getByRole('button', { name: '风险' }))
 
+  expect(screen.getByRole('button', { name: '风险' })).toHaveAttribute('aria-expanded', 'true')
   expect(await screen.findByRole('heading', { name: '爆仓风险' })).toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: '仓位风险', selected: true })).toBeInTheDocument()
   expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
   expect(screen.getByText('0%')).toBeInTheDocument()
   expect(screen.queryByText('0.1721%')).not.toBeInTheDocument()
@@ -623,9 +644,10 @@ test('switches liquidation risk panel to margin balance risk by channel', async 
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '爆仓风险' }))
-  expect(await screen.findByRole('button', { name: '仓位风险' })).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '保证金余额' }))
+  expect(await screen.findByRole('tab', { name: '仓位风险', selected: true })).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: '保证金余额' }))
 
+  expect(screen.getByRole('tab', { name: '保证金余额', selected: true })).toBeInTheDocument()
   expect(screen.getByLabelText('爆仓风险保证金余额')).toBeInTheDocument()
   expect(screen.getByText('主账户 · Binance')).toBeInTheDocument()
   expect(screen.getByText('65%')).toBeInTheDocument()
@@ -641,9 +663,10 @@ test('switches liquidation risk panel to suspected ADL events', async () => {
   render(<App />)
 
   await user.click(await screen.findByRole('button', { name: '爆仓风险' }))
-  expect(await screen.findByRole('button', { name: 'ADL 检测' })).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'ADL 检测' }))
+  expect(await screen.findByRole('tab', { name: 'ADL 检测' })).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'ADL 检测' }))
 
+  expect(screen.getByRole('tab', { name: 'ADL 检测', selected: true })).toBeInTheDocument()
   expect(screen.getByLabelText('ADL 检测事件')).toBeInTheDocument()
   expect(screen.getByText('主账户 · BTCUSDT')).toBeInTheDocument()
   expect(screen.getByText('LONG · 疑似 ADL')).toBeInTheDocument()
@@ -962,6 +985,7 @@ test('loads live balances only after refresh is clicked', async () => {
   await user.click(await screen.findByRole('button', { name: '刷新资产' }))
 
   expect((await screen.findAllByText('5250.00 USD')).length).toBeGreaterThan(0)
+  await user.click(screen.getByRole('button', { name: '资产分布' }))
   expect(screen.getByText('主账户 · 现货')).toBeInTheDocument()
 })
 

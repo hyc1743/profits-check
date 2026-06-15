@@ -84,10 +84,10 @@ type LiquidationMonitorFormValues = z.output<typeof liquidationMonitorSchema>
 
 const calendarWeekdays = ['日', '一', '二', '三', '四', '五', '六']
 const fallbackChartPalette = {
-  accent: '#2ebd85',
-  accentSoft: 'rgba(46,189,133,0.25)',
-  accentFaint: 'rgba(46,189,133,0.02)',
-  ink: '#182126',
+  accent: '#b53624',
+  accentSoft: 'rgba(181,54,36,0.25)',
+  accentFaint: 'rgba(181,54,36,0.02)',
+  ink: '#1a1814',
 }
 
 type ThemeMode = 'light' | 'dark'
@@ -407,6 +407,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const [showProfitCalendar, setShowProfitCalendar] = useState(false)
   const [showFundingFees, setShowFundingFees] = useState(false)
   const [showLiquidationRisk, setShowLiquidationRisk] = useState(false)
+  const [showAssetDistribution, setShowAssetDistribution] = useState(false)
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState('')
   const [selectedProfitMonth, setSelectedProfitMonth] = useState('')
   const [selectedFundingDate, setSelectedFundingDate] = useState(getCurrentDateKey)
@@ -711,6 +712,17 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
   const trendSummary = hasSnapshots && firstSnapshot && latestSnapshot
     ? `最近 ${snapshotRuns.length} 次快照：${formatUsd(firstSnapshot.totalValueUsd)} 到 ${formatUsd(latestSnapshot.totalValueUsd)}`
     : '保存一次快照后，这里会显示总资产变化。'
+  const openSection = (sectionId: 'overview' | 'asset-distribution-panel' | 'liquidation-risk-panel') => {
+    if (sectionId === 'asset-distribution-panel') {
+      setShowAssetDistribution(true)
+    }
+    if (sectionId === 'liquidation-risk-panel') {
+      setShowLiquidationRisk(true)
+    }
+    window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    }, 0)
+  }
   const assetTrendOption: EChartsOption = {
     animation: true,
     tooltip: {
@@ -776,9 +788,25 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             <span>PC</span>
           </div>
           <nav className="rail-nav" aria-label="页面区域">
-            <a href="#overview">总览</a>
-            <a href="#risk">风险</a>
-            <a href="#distribution">分布</a>
+            <button type="button" onClick={() => openSection('overview')}>
+              总览
+            </button>
+            <button
+              type="button"
+              aria-expanded={showLiquidationRisk}
+              aria-controls="liquidation-risk-panel"
+              onClick={() => openSection('liquidation-risk-panel')}
+            >
+              风险
+            </button>
+            <button
+              type="button"
+              aria-expanded={showAssetDistribution}
+              aria-controls="asset-distribution-panel"
+              onClick={() => openSection('asset-distribution-panel')}
+            >
+              分布
+            </button>
           </nav>
           <div className="rail-status" aria-label="系统状态">
             <span>Snapshots</span>
@@ -790,8 +818,8 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
           <div className="top-bar">
             <div className="top-copy">
               <p className="panel-kicker">Profits Check</p>
-              <h1>Portfolio Risk Console</h1>
-              <span>{`Latest snapshot · ${latestSnapshotTime}`}</span>
+              <h1>资产风险看板</h1>
+              <span>{`最新快照 · ${latestSnapshotTime}`}</span>
             </div>
             <div className="top-actions">
               <button
@@ -804,13 +832,13 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
                   setChartPalette(readChartPalette())
                 }}
               >
-                {themeMode === 'light' ? 'Dark mode' : 'Light mode'}
+                {themeMode === 'light' ? '深色模式' : '浅色模式'}
               </button>
               <button type="button" className="settings-button" onClick={() => setShowSettings(true)}>
                 设置
               </button>
               <button type="button" className="settings-button" onClick={() => void onLogout()}>
-                Sign out
+                退出登录
               </button>
             </div>
           </div>
@@ -897,7 +925,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             <div className="chart-block">
               {hasSnapshots ? (
                 <ChartSurface ariaLabel={`资产走势。${trendSummary}`} option={assetTrendOption}>
-                  <table aria-label="资产走势数据">
+                  <table className="sk-table" aria-label="资产走势数据">
                     <thead>
                       <tr>
                         <th>日期</th>
@@ -945,6 +973,16 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             <button
               type="button"
               className="button button-ghost"
+              id="distribution"
+              aria-expanded={showAssetDistribution}
+              aria-controls="asset-distribution-panel"
+              onClick={() => setShowAssetDistribution((current) => !current)}
+            >
+              资产分布
+            </button>
+            <button
+              type="button"
+              className="button button-ghost"
               id="risk"
               aria-expanded={showLiquidationRisk}
               aria-controls="liquidation-risk-panel"
@@ -958,7 +996,7 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
               aria-expanded={showFundingFees}
               onClick={() => setShowFundingFees((current) => !current)}
             >
-              资费统计
+              资金费统计
             </button>
             {showAssetCalendar ? (
               <div className="calendar-panel" aria-label="资产日历">
@@ -1164,73 +1202,75 @@ function ProfitConsole({ onLogout }: { onLogout: () => Promise<void> }) {
             />
           ) : null}
 
-          <div className="distribution-block" id="distribution">
-            <div className="asset-totals-head">
-              <h3>资产分布</h3>
-              <span>渠道占比与账户类别。</span>
-            </div>
-            <div className="distribution-grid">
-              <details className="distribution-chart">
-                <summary>
-                  <h4>渠道占比</h4>
-                </summary>
-                {channelShareItems.length > 0 ? (
-                  <>
-                    <ChartSurface
-                      ariaLabel="渠道资产占比"
-                      option={{
-                        animation: false,
-                        series: [
-                          {
-                            type: 'pie',
-                            radius: ['55%', '78%'],
-                            label: {
-                              color: chartPalette.ink,
-                              formatter: (params: { name?: string; percent?: number }) =>
-                                `${params.name ?? ''} ${Math.round(Number(params.percent ?? 0))}%`,
+          {showAssetDistribution ? (
+            <div className="distribution-block" id="asset-distribution-panel">
+              <div className="asset-totals-head">
+                <h3>资产分布</h3>
+                <span>渠道占比与账户类别。</span>
+              </div>
+              <div className="distribution-grid">
+                <details className="distribution-chart">
+                  <summary>
+                    <h4>渠道占比</h4>
+                  </summary>
+                  {channelShareItems.length > 0 ? (
+                    <>
+                      <ChartSurface
+                        ariaLabel="渠道资产占比"
+                        option={{
+                          animation: false,
+                          series: [
+                            {
+                              type: 'pie',
+                              radius: ['55%', '78%'],
+                              label: {
+                                color: chartPalette.ink,
+                                formatter: (params: { name?: string; percent?: number }) =>
+                                  `${params.name ?? ''} ${Math.round(Number(params.percent ?? 0))}%`,
+                              },
+                              data:
+                                channelShareItems.map((channel) => ({
+                                  name: channel.name,
+                                  value: channel.value,
+                                })),
                             },
-                            data:
-                              channelShareItems.map((channel) => ({
-                                name: channel.name,
-                                value: channel.value,
-                              })),
-                          },
-                        ],
-                      }}
-                    />
-                    <div className="channel-share-list" role="list" aria-label="渠道占比数据">
-                      {channelShareItems.map((channel) => (
-                        <div key={channel.name} className="channel-share-row" role="listitem">
-                          <strong>{channel.name}</strong>
-                          <span>{formatUsd(channel.value)}</span>
-                          <em>{`${channel.percent}%`}</em>
-                        </div>
-                      ))}
+                          ],
+                        }}
+                      />
+                      <div className="channel-share-list" role="list" aria-label="渠道占比数据">
+                        {channelShareItems.map((channel) => (
+                          <div key={channel.name} className="channel-share-row" role="listitem">
+                            <strong>{channel.name}</strong>
+                            <span>{formatUsd(channel.value)}</span>
+                            <em>{`${channel.percent}%`}</em>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="empty-copy">暂无渠道占比数据。</p>
+                  )}
+                </details>
+                <details className="account-list">
+                  <summary>
+                    <h4>按账户类别</h4>
+                  </summary>
+                  {(displayData?.accountCategoryTotals ?? []).map((item) => (
+                    <div key={`${item.channelName}-${item.accountScope}`} className="account-row">
+                      <div>
+                        <strong>{`${item.channelName} · ${humanizeAccountScope(item.accountScope)}`}</strong>
+                        <span>{`${humanizeProvider(item.provider)} · ${item.assetCount} 条记录`}</span>
+                      </div>
+                      <em>{formatUsd(item.valueUsd)}</em>
                     </div>
-                  </>
-                ) : (
-                  <p className="empty-copy">暂无渠道占比数据。</p>
-                )}
-              </details>
-              <details className="account-list">
-                <summary>
-                  <h4>按账户类别</h4>
-                </summary>
-                {(displayData?.accountCategoryTotals ?? []).map((item) => (
-                  <div key={`${item.channelName}-${item.accountScope}`} className="account-row">
-                    <div>
-                      <strong>{`${item.channelName} · ${humanizeAccountScope(item.accountScope)}`}</strong>
-                      <span>{`${humanizeProvider(item.provider)} · ${item.assetCount} 条记录`}</span>
-                    </div>
-                    <em>{formatUsd(item.valueUsd)}</em>
-                  </div>
-                ))}
-                {(displayData?.accountCategoryTotals ?? []).length === 0 ? (
-                  <p className="empty-copy">暂无账户分类数据。</p>
-                ) : null}
-              </details>
+                  ))}
+                  {(displayData?.accountCategoryTotals ?? []).length === 0 ? (
+                    <p className="empty-copy">暂无账户分类数据。</p>
+                  ) : null}
+                </details>
+              </div>
             </div>
-          </div>
+          ) : null}
         </article>
       </section>
 
@@ -1614,6 +1654,13 @@ function LiquidationRiskPanel({
   const marginBalances = monitor?.marginBalances ?? []
   const adlEvents = monitor?.adlEvents ?? []
   const [activeView, setActiveView] = useState<'position' | 'margin' | 'adl'>('position')
+  const tabBaseId = useId()
+  const positionTabId = `${tabBaseId}-position-tab`
+  const marginTabId = `${tabBaseId}-margin-tab`
+  const adlTabId = `${tabBaseId}-adl-tab`
+  const positionPanelId = `${tabBaseId}-position-panel`
+  const marginPanelId = `${tabBaseId}-margin-panel`
+  const adlPanelId = `${tabBaseId}-adl-panel`
 
   return (
     <div className="liquidation-block" id="liquidation-risk-panel">
@@ -1626,12 +1673,48 @@ function LiquidationRiskPanel({
         </span>
       </div>
       <div className="risk-tabs" role="tablist" aria-label="爆仓风险视图">
-        <button type="button" className={activeView === 'position' ? 'active' : ''} onClick={() => setActiveView('position')}>仓位风险</button>
-        <button type="button" className={activeView === 'margin' ? 'active' : ''} onClick={() => setActiveView('margin')}>保证金余额</button>
-        <button type="button" className={activeView === 'adl' ? 'active' : ''} onClick={() => setActiveView('adl')}>ADL 检测</button>
+        <button
+          type="button"
+          id={positionTabId}
+          role="tab"
+          className={activeView === 'position' ? 'active' : ''}
+          aria-selected={activeView === 'position'}
+          aria-controls={positionPanelId}
+          onClick={() => setActiveView('position')}
+        >
+          仓位风险
+        </button>
+        <button
+          type="button"
+          id={marginTabId}
+          role="tab"
+          className={activeView === 'margin' ? 'active' : ''}
+          aria-selected={activeView === 'margin'}
+          aria-controls={marginPanelId}
+          onClick={() => setActiveView('margin')}
+        >
+          保证金余额
+        </button>
+        <button
+          type="button"
+          id={adlTabId}
+          role="tab"
+          className={activeView === 'adl' ? 'active' : ''}
+          aria-selected={activeView === 'adl'}
+          aria-controls={adlPanelId}
+          onClick={() => setActiveView('adl')}
+        >
+          ADL 检测
+        </button>
       </div>
       {activeView === 'position' ? (
-        <div className="risk-list" aria-label="爆仓风险仓位">
+        <div
+          className="risk-list"
+          id={positionPanelId}
+          role="tabpanel"
+          aria-labelledby={positionTabId}
+          aria-label="爆仓风险仓位"
+        >
           {positions.length > 0 ? (
             positions.map((position) => (
               <div key={position.id} className={`risk-row risk-status-${position.status}`}>
@@ -1661,7 +1744,13 @@ function LiquidationRiskPanel({
           )}
         </div>
       ) : activeView === 'margin' ? (
-        <div className="risk-list" aria-label="爆仓风险保证金余额">
+        <div
+          className="risk-list"
+          id={marginPanelId}
+          role="tabpanel"
+          aria-labelledby={marginTabId}
+          aria-label="爆仓风险保证金余额"
+        >
           {marginBalances.length > 0 ? (
             marginBalances.map((item) => (
               <div key={item.id} className={`risk-row risk-status-${item.status}`}>
@@ -1691,7 +1780,13 @@ function LiquidationRiskPanel({
           )}
         </div>
       ) : (
-        <div className="risk-list" aria-label="ADL 检测事件">
+        <div
+          className="risk-list"
+          id={adlPanelId}
+          role="tabpanel"
+          aria-labelledby={adlTabId}
+          aria-label="ADL 检测事件"
+        >
           {adlEvents.length > 0 ? (
             adlEvents.map((item) => (
               <div key={item.id} className="risk-row risk-status-warning">
@@ -1794,7 +1889,7 @@ function FundingFeePanel({
       </div>
       <div className="funding-recent-block" aria-label="当月资金费">
         <div className="asset-totals-head funding-recent-head">
-          <h4>当月资费</h4>
+          <h4>当月资金费</h4>
           <span>
             {isCurrentMonthLoading
               ? '统计中'
@@ -1805,14 +1900,14 @@ function FundingFeePanel({
         </div>
         {currentMonthError ? <p className="form-error">{currentMonthError}</p> : null}
         <div className="funding-recent-grid">
-          <Metric label="当月资费收入" value={formatUsd(currentMonthSummary?.received ?? '0')} />
-          <Metric label="当月资费付出" value={formatUsd(currentMonthSummary?.paid ?? '0')} />
+          <Metric label="当月资金费收入" value={formatUsd(currentMonthSummary?.received ?? '0')} />
+          <Metric label="当月资金费付出" value={formatUsd(currentMonthSummary?.paid ?? '0')} />
           <Metric label="当月净费" value={formatUsd(currentMonthSummary?.net ?? '0')} />
         </div>
       </div>
       <div className="funding-recent-block" aria-label="上月资金费">
         <div className="asset-totals-head funding-recent-head">
-          <h4>上月资费</h4>
+          <h4>上月资金费</h4>
           <span>
             {isMonthlyLoading || isMonthlyRunning
               ? monthlySummary
@@ -1825,8 +1920,8 @@ function FundingFeePanel({
         </div>
         {monthlyError ? <p className="form-error">{monthlyError}</p> : null}
         <div className="funding-recent-grid">
-          <Metric label="月度资费收入" value={formatUsd(monthlySummary?.received ?? '0')} />
-          <Metric label="月度资费付出" value={formatUsd(monthlySummary?.paid ?? '0')} />
+          <Metric label="月度资金费收入" value={formatUsd(monthlySummary?.received ?? '0')} />
+          <Metric label="月度资金费付出" value={formatUsd(monthlySummary?.paid ?? '0')} />
           <Metric label="月度净费" value={formatUsd(monthlySummary?.net ?? '0')} />
         </div>
       </div>
