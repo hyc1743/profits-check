@@ -728,6 +728,51 @@ def test_previous_monthly_funding_fees_api_reports_running_summary(client) -> No
     }
 
 
+def test_previous_monthly_funding_fees_api_starts_missing_summary_in_background(client) -> None:
+    from profits_check_backend.services.funding_fees import previous_month_period
+
+    collection_started = threading.Event()
+    release_collection = threading.Event()
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            collection_started.set()
+            await asyncio.to_thread(release_collection.wait, 2)
+            return []
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+    month, start_date, end_date = previous_month_period()
+
+    response = client.get("/api/funding-fees/monthly/previous")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["month"] == month
+    assert response.json()["startDate"] == start_date
+    assert response.json()["endDate"] == end_date
+    assert collection_started.wait(timeout=2)
+    release_collection.set()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if client.app.state.monthly_funding_fee_lock.acquire(blocking=False):
+            client.app.state.monthly_funding_fee_lock.release()
+            break
+        time.sleep(0.02)
+
+
 def test_current_monthly_funding_fees_collects_missing_days_once(client) -> None:
     calls: list[tuple[int, int]] = []
 
@@ -764,17 +809,79 @@ def test_current_monthly_funding_fees_collects_missing_days_once(client) -> None
     assert response.status_code == 200
     payload = response.json()
     assert payload["month"] == datetime.now(UTC).astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m")
-    assert payload["cachedDays"] == payload["expectedDays"]
+    assert payload["status"] == "running"
+    assert payload["cachedDays"] < payload["expectedDays"]
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if client.app.state.current_month_funding_fee_lock.acquire(blocking=False):
+            client.app.state.current_month_funding_fee_lock.release()
+            break
+        time.sleep(0.02)
     assert len(calls) == payload["expectedDays"]
 
     response = client.get("/api/funding-fees/monthly/current")
 
     assert response.status_code == 200
+    assert response.json()["cachedDays"] == response.json()["expectedDays"]
     assert len(calls) == payload["expectedDays"]
+
+
+def test_current_monthly_funding_fees_starts_missing_days_in_background(client, monkeypatch) -> None:
+    import profits_check_backend.main as main_module
+
+    collection_started = threading.Event()
+    release_collection = threading.Event()
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            collection_started.set()
+            await asyncio.to_thread(release_collection.wait, 2)
+            return []
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    now = datetime(2024, 7, 2, 2, tzinfo=UTC)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return now.replace(tzinfo=None)
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(main_module, "datetime", FixedDateTime)
+    response = client.get("/api/funding-fees/monthly/current")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["cachedDays"] < response.json()["expectedDays"]
+    assert collection_started.wait(timeout=2)
+    release_collection.set()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if client.app.state.current_month_funding_fee_lock.acquire(blocking=False):
+            client.app.state.current_month_funding_fee_lock.release()
+            break
+        time.sleep(0.02)
+
 
 
 def test_current_monthly_funding_fees_uses_legacy_daily_totals_without_asset_details(
     client,
+    monkeypatch,
 ) -> None:
     from profits_check_backend.services.funding_fees import current_month_completed_period
 
@@ -818,8 +925,7 @@ def test_current_monthly_funding_fees_uses_legacy_daily_totals_without_asset_det
         session.commit()
 
     import profits_check_backend.main as main_module
-
-    original_datetime = main_module.datetime
+    import profits_check_backend.services.funding_fees as funding_service
 
     class FixedDateTime(datetime):
         @classmethod
@@ -828,11 +934,9 @@ def test_current_monthly_funding_fees_uses_legacy_daily_totals_without_asset_det
                 return now.replace(tzinfo=None)
             return now.astimezone(tz)
 
-    main_module.datetime = FixedDateTime
-    try:
-        response = client.get("/api/funding-fees/monthly/current")
-    finally:
-        main_module.datetime = original_datetime
+    monkeypatch.setattr(main_module, "datetime", FixedDateTime)
+    monkeypatch.setattr(funding_service, "datetime", FixedDateTime)
+    response = client.get("/api/funding-fees/monthly/current")
 
     assert response.status_code == 200
     payload = response.json()
@@ -889,12 +993,16 @@ def test_current_monthly_funding_fees_waits_for_in_flight_daily_collection(clien
     release_timer.start()
     try:
         response = client.get("/api/funding-fees/monthly/current")
+        assert response.status_code == 200
+        assert response.json()["status"] == "running"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not calls:
+            time.sleep(0.02)
     finally:
         release_timer.cancel()
         if held_lock.locked():
             held_lock.release()
 
-    assert response.status_code == 200
     assert calls[0][0] == start_time_ms
 
 

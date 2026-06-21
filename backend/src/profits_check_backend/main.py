@@ -408,9 +408,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             finally:
                 liquidation_monitor_lock.release()
 
-    def run_previous_month_funding_fee_summary() -> None:
-        if not monthly_funding_fee_lock.acquire(blocking=False):
-            return
+    def collect_previous_month_funding_fee_summary_with_lock() -> None:
         with session_factory() as session:
             try:
                 channels = list(
@@ -433,9 +431,21 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             finally:
                 monthly_funding_fee_lock.release()
 
-    def run_current_month_funding_fee_summary() -> None:
-        if not current_month_funding_fee_lock.acquire(blocking=False):
+    def run_previous_month_funding_fee_summary() -> None:
+        if not monthly_funding_fee_lock.acquire(blocking=False):
             return
+        collect_previous_month_funding_fee_summary_with_lock()
+
+    def start_previous_month_funding_fee_summary() -> bool:
+        if not monthly_funding_fee_lock.acquire(blocking=False):
+            return False
+        threading.Thread(
+            target=collect_previous_month_funding_fee_summary_with_lock,
+            daemon=True,
+        ).start()
+        return True
+
+    def collect_current_month_funding_fee_summary_with_lock() -> None:
         with session_factory() as session:
             try:
                 channels = list(
@@ -455,6 +465,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 logger.exception("api.current_month_funding_fees.startup_failed")
             finally:
                 current_month_funding_fee_lock.release()
+
+    def run_current_month_funding_fee_summary() -> None:
+        if not current_month_funding_fee_lock.acquire(blocking=False):
+            return
+        collect_current_month_funding_fee_summary_with_lock()
+
+    def start_current_month_funding_fee_summary() -> bool:
+        if not current_month_funding_fee_lock.acquire(blocking=False):
+            return False
+        threading.Thread(
+            target=collect_current_month_funding_fee_summary_with_lock,
+            daemon=True,
+        ).start()
+        return True
 
     def run_daily_funding_fee_increment() -> None:
         with session_factory() as session:
@@ -1070,25 +1094,16 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         _: object = Depends(require_session),
         session: Session = Depends(get_session),
     ):
-        if not app.state.current_month_funding_fee_lock.acquire(blocking=False):
-            summary = current_month_funding_fee_summary_from_database(session)
-            return current_month_funding_fee_summary_payload(summary)
-        try:
+        summary = current_month_funding_fee_summary_from_database(session)
+        if summary.cached_days < summary.expected_days:
             channels = list(
                 session.scalars(
                     select(Channel).where(Channel.enabled.is_(True)).order_by(Channel.id)
                 )
             )
             if channels:
-                summary = ensure_current_month_funding_fee_summaries_with_date_locks(
-                    session=session,
-                    channels=channels,
-                )
-                session.commit()
-            else:
-                summary = current_month_funding_fee_summary_from_database(session)
-        finally:
-            app.state.current_month_funding_fee_lock.release()
+                start_current_month_funding_fee_summary()
+                summary.status = "running"
         return current_month_funding_fee_summary_payload(summary)
 
     @app.get("/api/funding-fees/monthly/previous")
@@ -1108,22 +1123,12 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             )
             if not channels:
                 raise HTTPException(status_code=404, detail="Monthly funding fee summary not found")
-            if not app.state.monthly_funding_fee_lock.acquire(blocking=False):
-                return running_monthly_funding_fee_summary_payload(
-                    month=month,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
-            try:
-                summary = ensure_previous_month_funding_fee_summary(
-                    session=session,
-                    channels=channels,
-                    cipher=cipher,
-                    provider_builder=app.state.provider_builder,
-                )
-                session.commit()
-            finally:
-                app.state.monthly_funding_fee_lock.release()
+            start_previous_month_funding_fee_summary()
+            return running_monthly_funding_fee_summary_payload(
+                month=month,
+                start_date=start_date,
+                end_date=end_date,
+            )
         return monthly_funding_fee_summary_payload(summary)
 
     @app.put("/api/portfolio-inclusion-rules")
