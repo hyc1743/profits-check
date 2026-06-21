@@ -413,8 +413,12 @@ def get_daily_funding_fee_summary(
     return session.scalar(select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date))
 
 
-def is_daily_funding_fee_summary_complete(summary: DailyFundingFeeSummary) -> bool:
-    if summary.records_count > 0 and not summary.asset_details:
+def is_daily_funding_fee_summary_complete(
+    summary: DailyFundingFeeSummary,
+    *,
+    require_asset_details: bool = True,
+) -> bool:
+    if require_asset_details and summary.records_count > 0 and not summary.asset_details:
         return False
 
     created_at = summary.created_at
@@ -466,9 +470,13 @@ def ensure_daily_funding_fee_summary(
     channels: list[Channel],
     cipher: SecretCipher,
     provider_builder,
+    require_asset_details: bool = True,
 ) -> DailyFundingFeeSummary:
     existing = get_daily_funding_fee_summary(session, date)
-    if existing is not None and is_daily_funding_fee_summary_complete(existing):
+    if existing is not None and is_daily_funding_fee_summary_complete(
+        existing,
+        require_asset_details=require_asset_details,
+    ):
         return existing
     if existing is not None:
         session.delete(existing)
@@ -492,6 +500,7 @@ def ensure_daily_funding_fee_summaries(
     channels: list[Channel],
     cipher: SecretCipher,
     provider_builder,
+    require_asset_details: bool = True,
 ) -> list[DailyFundingFeeSummary]:
     summaries: list[DailyFundingFeeSummary] = []
     for date in date_range(start_date, end_date):
@@ -502,6 +511,7 @@ def ensure_daily_funding_fee_summaries(
                 channels=channels,
                 cipher=cipher,
                 provider_builder=provider_builder,
+                require_asset_details=require_asset_details,
             )
         )
     return summaries
@@ -570,6 +580,7 @@ def ensure_current_month_funding_fee_summaries(
             channels=channels,
             cipher=cipher,
             provider_builder=provider_builder,
+            require_asset_details=False,
         )
     return current_month_funding_fee_summary_from_database(session, now_factory=lambda: now)
 

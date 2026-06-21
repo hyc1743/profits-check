@@ -773,6 +773,75 @@ def test_current_monthly_funding_fees_collects_missing_days_once(client) -> None
     assert len(calls) == payload["expectedDays"]
 
 
+def test_current_monthly_funding_fees_uses_legacy_daily_totals_without_asset_details(
+    client,
+) -> None:
+    from profits_check_backend.services.funding_fees import current_month_completed_period
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            raise AssertionError("current month totals should not refresh legacy detail caches")
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    response = client.post(
+        "/api/channels",
+        json={
+            "name": "Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert response.status_code == 201
+
+    now = datetime(2024, 7, 2, 2, tzinfo=UTC)
+    _, start_date, _ = current_month_completed_period(now)
+    start_time, end_time, _, _ = date_bounds_ms(start_date)
+    with client.app.state.session_factory() as session:
+        session.add(
+            DailyFundingFeeSummary(
+                date=start_date,
+                start_time=start_time,
+                end_time=end_time,
+                received=Decimal("3"),
+                paid=Decimal("1"),
+                net=Decimal("2"),
+                records_count=2,
+                status="success",
+                created_at=end_time,
+                updated_at=end_time,
+            )
+        )
+        session.commit()
+
+    import profits_check_backend.main as main_module
+
+    original_datetime = main_module.datetime
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return now.replace(tzinfo=None)
+            return now.astimezone(tz)
+
+    main_module.datetime = FixedDateTime
+    try:
+        response = client.get("/api/funding-fees/monthly/current")
+    finally:
+        main_module.datetime = original_datetime
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["received"] == "3.00000000"
+    assert payload["paid"] == "1.00000000"
+    assert payload["net"] == "2.00000000"
+    assert payload["cachedDays"] == 1
+
+
 def test_current_monthly_funding_fees_waits_for_in_flight_daily_collection(client) -> None:
     from profits_check_backend.services.funding_fees import current_month_completed_period
 

@@ -493,25 +493,35 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         date: str,
         channels: list[Channel],
         wait_for_running: bool = False,
+        require_asset_details: bool = True,
     ) -> DailyFundingFeeSummary:
         cached = session.scalar(
             select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
         )
-        if cached is not None and is_daily_funding_fee_summary_complete(cached):
+        if cached is not None and is_daily_funding_fee_summary_complete(
+            cached,
+            require_asset_details=require_asset_details,
+        ):
             return cached
         date_lock = daily_funding_fee_date_locks.acquire(date, blocking=wait_for_running)
         if date_lock is None:
             cached = session.scalar(
                 select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
             )
-            if cached is not None and is_daily_funding_fee_summary_complete(cached):
+            if cached is not None and is_daily_funding_fee_summary_complete(
+                cached,
+                require_asset_details=require_asset_details,
+            ):
                 return cached
             raise HTTPException(status_code=409, detail="Daily funding fee summary is running")
         try:
             cached = session.scalar(
                 select(DailyFundingFeeSummary).where(DailyFundingFeeSummary.date == date)
             )
-            if cached is not None and is_daily_funding_fee_summary_complete(cached):
+            if cached is not None and is_daily_funding_fee_summary_complete(
+                cached,
+                require_asset_details=require_asset_details,
+            ):
                 return cached
             summary = ensure_daily_funding_fee_summary(
                 session=session,
@@ -519,6 +529,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 channels=channels,
                 cipher=cipher,
                 provider_builder=app.state.provider_builder,
+                require_asset_details=require_asset_details,
             )
             session.commit()
             return summary
@@ -539,6 +550,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                     date=date,
                     channels=channels,
                     wait_for_running=True,
+                    require_asset_details=False,
                 )
         return current_month_funding_fee_summary_from_database(session, now_factory=lambda: now)
 
