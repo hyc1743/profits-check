@@ -188,7 +188,7 @@ def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) ->
         *, date: str, received: str, paid: str, net: str, records_count: int
     ) -> DailyFundingFeeSummary:
         start_time, end_time, _, _ = date_bounds_ms(date)
-        return DailyFundingFeeSummary(
+        summary = DailyFundingFeeSummary(
             date=date,
             start_time=start_time,
             end_time=end_time,
@@ -198,6 +198,17 @@ def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) ->
             records_count=records_count,
             status="success",
         )
+        summary.asset_details = [
+            DailyFundingFeeAssetSummary(
+                channel_id=1,
+                channel_name="Binance",
+                provider="binance",
+                asset="USDT",
+                amount=Decimal(net),
+                records_count=records_count,
+            )
+        ]
+        return summary
 
     with client.app.state.session_factory() as session:
         session.add_all(
@@ -291,6 +302,72 @@ def test_funding_fees_api_reads_asset_details_from_database(client) -> None:
             "recordsCount": 2,
         },
     ]
+
+
+def test_funding_fees_api_refreshes_legacy_cache_without_asset_details(client) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="Binance",
+                    amount=Decimal("2.75"),
+                    asset="USDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "name": "Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert channel_response.status_code == 201
+
+    start_time, end_time, start_ms, end_ms = date_bounds_ms("2024-07-01")
+    with client.app.state.session_factory() as session:
+        session.add(
+            DailyFundingFeeSummary(
+                date="2024-07-01",
+                start_time=start_time,
+                end_time=end_time,
+                received=Decimal("1"),
+                paid=Decimal("0"),
+                net=Decimal("1"),
+                records_count=1,
+                status="success",
+                created_at=end_time,
+                updated_at=end_time,
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/funding-fees?date=2024-07-01")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["details"] == [
+        {
+            "channelId": 1,
+            "channelName": "Binance",
+            "provider": "binance",
+            "asset": "USDT",
+            "amount": "2.75000000",
+            "recordsCount": 1,
+        }
+    ]
+    assert calls == [(start_ms, end_ms)]
 
 
 def test_funding_fees_api_refreshes_partial_cache_created_before_day_closed(client) -> None:

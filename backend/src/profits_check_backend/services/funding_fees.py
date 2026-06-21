@@ -414,6 +414,9 @@ def get_daily_funding_fee_summary(
 
 
 def is_daily_funding_fee_summary_complete(summary: DailyFundingFeeSummary) -> bool:
+    if summary.records_count > 0 and not summary.asset_details:
+        return False
+
     created_at = summary.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
