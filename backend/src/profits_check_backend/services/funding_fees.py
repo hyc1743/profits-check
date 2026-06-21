@@ -26,6 +26,7 @@ from profits_check_backend.services.channels import decode_public_config, decode
 
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATE_TIMEZONE = ZoneInfo("Asia/Shanghai")
+SETTLEMENT_ASSETS = {"USD", "USDT", "USDC", "BUSD", "FDUSD", "BTC", "ETH"}
 logger = logging.getLogger("profits_check.funding_fees")
 
 
@@ -421,8 +422,12 @@ def is_daily_funding_fee_summary_complete(
     *,
     require_asset_details: bool = True,
 ) -> bool:
-    if require_asset_details and summary.records_count > 0 and not summary.asset_details:
-        return False
+    if require_asset_details and summary.records_count > 0:
+        if not summary.asset_details:
+            return False
+        detail_symbols = {item.asset.upper() for item in summary.asset_details}
+        if detail_symbols and detail_symbols <= SETTLEMENT_ASSETS:
+            return False
 
     created_at = summary.created_at
     if created_at.tzinfo is None:
