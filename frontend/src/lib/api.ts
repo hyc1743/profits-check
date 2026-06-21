@@ -241,6 +241,15 @@ export interface FundingFeeChannelSummary {
   error?: string | null
 }
 
+export interface FundingFeeAssetDetail {
+  channelId: number
+  channelName: string
+  provider: string
+  asset: string
+  amount: string
+  recordsCount: number
+}
+
 export interface FundingFeePeriodSummary {
   startDate: string
   endDate: string
@@ -260,6 +269,7 @@ export interface FundingFeeSummaryResponse {
   recordsCount: number
   recentSevenDays: FundingFeePeriodSummary
   channels: FundingFeeChannelSummary[]
+  details: FundingFeeAssetDetail[]
 }
 
 export interface MonthlyFundingFeeSummaryResponse {

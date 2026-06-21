@@ -1864,6 +1864,7 @@ function FundingFeePanel({
 }) {
   const recentSevenDays = summary?.recentSevenDays
   const isMonthlyRunning = monthlySummary?.status === 'running'
+  const fundingDetails = summary?.details ?? []
 
   return (
     <div className="funding-fee-panel" aria-label="资金费统计">
@@ -1886,6 +1887,44 @@ function FundingFeePanel({
         <Metric label="资金费收取" value={formatUsd(summary?.received ?? '0')} />
         <Metric label="资金费付出" value={formatUsd(summary?.paid ?? '0')} />
         <Metric label="净资金费" value={formatUsd(summary?.net ?? '0')} />
+      </div>
+      <div className="funding-recent-block" aria-label="当日资金费明细">
+        <div className="asset-totals-head funding-recent-head">
+          <h4>当日资金费明细</h4>
+          <span>{`${fundingDetails.length} 项`}</span>
+        </div>
+        {fundingDetails.length > 0 ? (
+          <div className="funding-detail-table-wrap">
+            <table className="funding-detail-table">
+              <thead>
+                <tr>
+                  <th scope="col">渠道</th>
+                  <th scope="col">币种</th>
+                  <th scope="col">金额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fundingDetails.map((item) => (
+                  <tr key={`${item.channelId}-${item.asset}`}>
+                    <td>{item.channelName}</td>
+                    <td>{item.asset}</td>
+                    <td
+                      className={
+                        Number(item.amount) >= 0
+                          ? 'funding-amount-positive'
+                          : 'funding-amount-negative'
+                      }
+                    >
+                      {formatFundingAmount(item.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty-copy">暂无结算记录</p>
+        )}
       </div>
       <div className="funding-recent-block" aria-label="当月资金费">
         <div className="asset-totals-head funding-recent-head">
@@ -1942,6 +1981,15 @@ function FundingFeePanel({
       </div>
     </div>
   )
+}
+
+function formatFundingAmount(value: string): string {
+  const numeric = Number(value)
+  if (Number.isNaN(numeric)) {
+    return value
+  }
+  const prefix = numeric > 0 ? '+' : ''
+  return `${prefix}${numeric.toFixed(8)}`
 }
 
 function ChannelList({

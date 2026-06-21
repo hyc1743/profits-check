@@ -10,7 +10,12 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from profits_check_backend.models import Channel, DailyFundingFeeSummary, MonthlyFundingFeeSummary
+from profits_check_backend.models import (
+    Channel,
+    DailyFundingFeeAssetSummary,
+    DailyFundingFeeSummary,
+    MonthlyFundingFeeSummary,
+)
 from profits_check_backend.providers.base import FundingFeeRecord
 from profits_check_backend.services.funding_fees import date_bounds_ms, date_range
 
@@ -33,7 +38,21 @@ def test_funding_fees_api_summarizes_daily_records(client) -> None:
                     amount=Decimal("12.5") if self.provider == "binance" else Decimal("-3"),
                     asset="USDT",
                     timestamp_ms=1719763200000,
-                )
+                ),
+                FundingFeeRecord(
+                    provider=self.provider,
+                    channel_name=self.channel_name,
+                    amount=Decimal("2.25") if self.provider == "binance" else Decimal("-0.5"),
+                    asset="BTC",
+                    timestamp_ms=1719763200000,
+                ),
+                FundingFeeRecord(
+                    provider=self.provider,
+                    channel_name=self.channel_name,
+                    amount=Decimal("0.75") if self.provider == "binance" else Decimal("-1.5"),
+                    asset="USDT",
+                    timestamp_ms=1719763200000,
+                ),
             ]
 
     client.app.state.provider_builder = lambda provider_type, channel_name, **_: StubProvider(
@@ -58,12 +77,46 @@ def test_funding_fees_api_summarizes_daily_records(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["date"] == "2024-07-01"
-    assert payload["received"] == "12.50000000"
-    assert payload["paid"] == "3.00000000"
-    assert payload["net"] == "9.50000000"
-    assert payload["recordsCount"] == 2
-    assert payload["channels"][0]["received"] == "12.50000000"
-    assert payload["channels"][1]["paid"] == "3.00000000"
+    assert payload["received"] == "15.50000000"
+    assert payload["paid"] == "5.00000000"
+    assert payload["net"] == "10.50000000"
+    assert payload["recordsCount"] == 6
+    assert payload["channels"][0]["received"] == "15.50000000"
+    assert payload["channels"][1]["paid"] == "5.00000000"
+    assert payload["details"] == [
+        {
+            "channelId": 1,
+            "channelName": "binance main",
+            "provider": "binance",
+            "asset": "BTC",
+            "amount": "2.25000000",
+            "recordsCount": 1,
+        },
+        {
+            "channelId": 1,
+            "channelName": "binance main",
+            "provider": "binance",
+            "asset": "USDT",
+            "amount": "13.25000000",
+            "recordsCount": 2,
+        },
+        {
+            "channelId": 2,
+            "channelName": "okx main",
+            "provider": "okx",
+            "asset": "BTC",
+            "amount": "-0.50000000",
+            "recordsCount": 1,
+        },
+        {
+            "channelId": 2,
+            "channelName": "okx main",
+            "provider": "okx",
+            "asset": "USDT",
+            "amount": "-4.50000000",
+            "recordsCount": 2,
+        },
+    ]
 
 
 def test_funding_fees_api_includes_recent_seven_day_totals(client) -> None:
@@ -175,6 +228,69 @@ def test_funding_fees_api_reads_daily_and_recent_totals_from_database(client) ->
         "net": "5.50000000",
         "recordsCount": 6,
     }
+
+
+def test_funding_fees_api_reads_asset_details_from_database(client) -> None:
+    start_time, end_time, _, _ = date_bounds_ms("2024-07-01")
+    with client.app.state.session_factory() as session:
+        summary = DailyFundingFeeSummary(
+            date="2024-07-01",
+            start_time=start_time,
+            end_time=end_time,
+            received=Decimal("8"),
+            paid=Decimal("3"),
+            net=Decimal("5"),
+            records_count=3,
+            status="success",
+            created_at=end_time,
+            updated_at=end_time,
+        )
+        summary.asset_details = [
+            DailyFundingFeeAssetSummary(
+                channel_id=1,
+                channel_name="Binance",
+                provider="binance",
+                asset="BTC",
+                amount=Decimal("8"),
+                records_count=1,
+            ),
+            DailyFundingFeeAssetSummary(
+                channel_id=2,
+                channel_name="OKX",
+                provider="okx",
+                asset="USDT",
+                amount=Decimal("-3"),
+                records_count=2,
+            ),
+        ]
+        session.add(summary)
+        session.commit()
+
+    def fail_provider_builder(**_):
+        raise AssertionError("provider should not be called for cached funding fee details")
+
+    client.app.state.provider_builder = fail_provider_builder
+    response = client.get("/api/funding-fees?date=2024-07-01")
+
+    assert response.status_code == 200
+    assert response.json()["details"] == [
+        {
+            "channelId": 1,
+            "channelName": "Binance",
+            "provider": "binance",
+            "asset": "BTC",
+            "amount": "8.00000000",
+            "recordsCount": 1,
+        },
+        {
+            "channelId": 2,
+            "channelName": "OKX",
+            "provider": "okx",
+            "asset": "USDT",
+            "amount": "-3.00000000",
+            "recordsCount": 2,
+        },
+    ]
 
 
 def test_funding_fees_api_refreshes_partial_cache_created_before_day_closed(client) -> None:

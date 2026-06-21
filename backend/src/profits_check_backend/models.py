@@ -142,6 +142,10 @@ class DailyFundingFeeSummary(Base):
         back_populates="daily_summary",
         cascade="all, delete-orphan",
     )
+    asset_details: Mapped[list[DailyFundingFeeAssetSummary]] = relationship(
+        back_populates="daily_summary",
+        cascade="all, delete-orphan",
+    )
 
 
 class DailyFundingFeeChannelSummary(Base):
@@ -163,6 +167,29 @@ class DailyFundingFeeChannelSummary(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     daily_summary: Mapped[DailyFundingFeeSummary] = relationship(back_populates="channels")
+
+
+class DailyFundingFeeAssetSummary(Base):
+    __tablename__ = "daily_funding_fee_asset_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "daily_summary_id",
+            "channel_id",
+            "asset",
+            name="uq_daily_funding_asset",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    daily_summary_id: Mapped[int] = mapped_column(ForeignKey("daily_funding_fee_summaries.id"))
+    channel_id: Mapped[int] = mapped_column(Integer)
+    channel_name: Mapped[str] = mapped_column(String(120))
+    provider: Mapped[str] = mapped_column(String(32))
+    asset: Mapped[str] = mapped_column(String(32))
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 8), default=Decimal("0"))
+    records_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    daily_summary: Mapped[DailyFundingFeeSummary] = relationship(back_populates="asset_details")
 
 
 class AppSetting(Base):

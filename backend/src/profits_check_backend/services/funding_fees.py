@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from profits_check_backend.models import (
     Channel,
+    DailyFundingFeeAssetSummary,
     DailyFundingFeeChannelSummary,
     DailyFundingFeeSummary,
     MonthlyFundingFeeSummary,
@@ -39,6 +40,16 @@ class FundingFeeChannelSummary:
     records_count: int = 0
     status: str = "success"
     error: str | None = None
+
+
+@dataclass(slots=True)
+class FundingFeeAssetDetail:
+    channel_id: int
+    channel_name: str
+    provider: str
+    asset: str
+    amount: Decimal
+    records_count: int
 
 
 @dataclass(slots=True)
@@ -67,6 +78,7 @@ class FundingFeeSummary:
     net: Decimal
     records_count: int
     channels: list[FundingFeeChannelSummary]
+    details: list[FundingFeeAssetDetail]
     recent_seven_days: FundingFeePeriodSummary
 
 
@@ -229,7 +241,7 @@ async def collect_daily_funding_fee_summary(
             ]
             return FundingFeeChannelCollection(
                 summary=summarize_channel_records(channel, selected_records),
-                records=records,
+                records=selected_records,
             )
         except Exception as exc:
             logger.error(
@@ -258,6 +270,7 @@ async def collect_daily_funding_fee_summary(
     paid = sum((item.paid for item in channel_summaries), Decimal("0"))
     net = sum((item.net for item in channel_summaries), Decimal("0"))
     records_count = sum(item.records_count for item in channel_summaries)
+    details = summarize_asset_details(channel_collections)
     recent_seven_days = FundingFeePeriodSummary(
         start_date=date,
         end_date=date,
@@ -285,6 +298,7 @@ async def collect_daily_funding_fee_summary(
         net=net,
         records_count=records_count,
         channels=channel_summaries,
+        details=details,
         recent_seven_days=recent_seven_days,
     )
 
@@ -324,6 +338,17 @@ def funding_fee_summary_from_daily_model(
             )
             for item in summary.channels
         ],
+        details=[
+            FundingFeeAssetDetail(
+                channel_id=item.channel_id,
+                channel_name=item.channel_name,
+                provider=item.provider,
+                asset=item.asset,
+                amount=item.amount,
+                records_count=item.records_count,
+            )
+            for item in sorted(summary.asset_details, key=lambda detail: (detail.channel_id, detail.asset))
+        ],
         recent_seven_days=daily_recent,
     )
 
@@ -362,6 +387,17 @@ def save_daily_funding_fee_summary(
             error=item.error,
         )
         for item in summary.channels
+    ]
+    model.asset_details = [
+        DailyFundingFeeAssetSummary(
+            channel_id=item.channel_id,
+            channel_name=item.channel_name,
+            provider=item.provider,
+            asset=item.asset,
+            amount=_quantize_decimal(item.amount),
+            records_count=item.records_count,
+        )
+        for item in summary.details
     ]
     session.add(model)
     session.flush()
@@ -639,6 +675,33 @@ def summarize_channel_records(
     )
 
 
+def summarize_asset_details(
+    channel_collections: list[FundingFeeChannelCollection],
+) -> list[FundingFeeAssetDetail]:
+    grouped: dict[tuple[int, str], FundingFeeAssetDetail] = {}
+    for collection in channel_collections:
+        summary = collection.summary
+        if summary.status != "success":
+            continue
+        for record in collection.records:
+            asset = record.asset.upper()
+            key = (summary.channel_id, asset)
+            detail = grouped.get(key)
+            if detail is None:
+                detail = FundingFeeAssetDetail(
+                    channel_id=summary.channel_id,
+                    channel_name=summary.channel_name,
+                    provider=summary.provider,
+                    asset=asset,
+                    amount=Decimal("0"),
+                    records_count=0,
+                )
+                grouped[key] = detail
+            detail.amount += record.amount
+            detail.records_count += 1
+    return sorted(grouped.values(), key=lambda item: (item.channel_id, item.asset))
+
+
 def summarize_period_records(
     records: list[FundingFeeRecord], *, start_date: str, end_date: str
 ) -> FundingFeePeriodSummary:
@@ -676,6 +739,17 @@ def funding_fee_summary_payload(summary: FundingFeeSummary) -> dict[str, object]
                 "error": item.error,
             }
             for item in summary.channels
+        ],
+        "details": [
+            {
+                "channelId": item.channel_id,
+                "channelName": item.channel_name,
+                "provider": item.provider,
+                "asset": item.asset,
+                "amount": _decimal_text(item.amount),
+                "recordsCount": item.records_count,
+            }
+            for item in summary.details
         ],
         "recentSevenDays": _period_summary_payload(summary.recent_seven_days),
     }

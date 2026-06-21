@@ -181,6 +181,64 @@
   gap: 0.45rem;
 }
 
+.funding-detail-table-wrap {
+  overflow-x: auto;
+  border: 1.5px solid var(--line);
+  background: var(--surface-card);
+}
+
+.funding-detail-table {
+  width: 100%;
+  min-width: 28rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.funding-detail-table th,
+.funding-detail-table td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.funding-detail-table th {
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.funding-detail-table td {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.funding-detail-table th:last-child,
+.funding-detail-table td:last-child {
+  text-align: right;
+}
+
+.funding-detail-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.funding-amount-positive,
+.funding-amount-negative {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.funding-amount-positive {
+  color: var(--positive-text);
+}
+
+.funding-amount-negative {
+  color: var(--accent);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
