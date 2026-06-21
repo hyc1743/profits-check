@@ -47,7 +47,7 @@ class FundingFeeAssetDetail:
     channel_id: int
     channel_name: str
     provider: str
-    asset: str
+    symbol: str
     amount: Decimal
     records_count: int
 
@@ -343,11 +343,14 @@ def funding_fee_summary_from_daily_model(
                 channel_id=item.channel_id,
                 channel_name=item.channel_name,
                 provider=item.provider,
-                asset=item.asset,
+                symbol=item.asset,
                 amount=item.amount,
                 records_count=item.records_count,
             )
-            for item in sorted(summary.asset_details, key=lambda detail: (detail.channel_id, detail.asset))
+            for item in sorted(
+                summary.asset_details,
+                key=lambda detail: (detail.channel_id, detail.asset),
+            )
         ],
         recent_seven_days=daily_recent,
     )
@@ -393,7 +396,7 @@ def save_daily_funding_fee_summary(
             channel_id=item.channel_id,
             channel_name=item.channel_name,
             provider=item.provider,
-            asset=item.asset,
+            asset=item.symbol,
             amount=_quantize_decimal(item.amount),
             records_count=item.records_count,
         )
@@ -698,22 +701,22 @@ def summarize_asset_details(
         if summary.status != "success":
             continue
         for record in collection.records:
-            asset = record.asset.upper()
-            key = (summary.channel_id, asset)
+            symbol = (record.symbol or record.asset).upper()
+            key = (summary.channel_id, symbol)
             detail = grouped.get(key)
             if detail is None:
                 detail = FundingFeeAssetDetail(
                     channel_id=summary.channel_id,
                     channel_name=summary.channel_name,
                     provider=summary.provider,
-                    asset=asset,
+                    symbol=symbol,
                     amount=Decimal("0"),
                     records_count=0,
                 )
                 grouped[key] = detail
             detail.amount += record.amount
             detail.records_count += 1
-    return sorted(grouped.values(), key=lambda item: (item.channel_id, item.asset))
+    return sorted(grouped.values(), key=lambda item: (item.channel_id, item.symbol))
 
 
 def summarize_period_records(
@@ -759,7 +762,7 @@ def funding_fee_summary_payload(summary: FundingFeeSummary) -> dict[str, object]
                 "channelId": item.channel_id,
                 "channelName": item.channel_name,
                 "provider": item.provider,
-                "asset": item.asset,
+                "symbol": item.symbol,
                 "amount": _decimal_text(item.amount),
                 "recordsCount": item.records_count,
             }

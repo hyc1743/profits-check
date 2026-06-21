@@ -1899,15 +1899,15 @@ function FundingFeePanel({
               <thead>
                 <tr>
                   <th scope="col">渠道</th>
-                  <th scope="col">币种</th>
+                  <th scope="col">合约品种</th>
                   <th scope="col">金额</th>
                 </tr>
               </thead>
               <tbody>
                 {fundingDetails.map((item) => (
-                  <tr key={`${item.channelId}-${item.asset}`}>
+                  <tr key={`${item.channelId}-${item.symbol}`}>
                     <td>{item.channelName}</td>
-                    <td>{item.asset}</td>
+                    <td>{item.symbol}</td>
                     <td
                       className={
                         Number(item.amount) >= 0

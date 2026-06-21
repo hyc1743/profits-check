@@ -245,7 +245,7 @@ export interface FundingFeeAssetDetail {
   channelId: number
   channelName: string
   provider: string
-  asset: string
+  symbol: string
   amount: string
   recordsCount: number
 }
