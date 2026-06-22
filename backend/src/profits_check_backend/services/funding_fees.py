@@ -422,11 +422,11 @@ def is_daily_funding_fee_summary_complete(
     *,
     require_asset_details: bool = True,
 ) -> bool:
-    if require_asset_details and summary.records_count > 0:
-        if not summary.asset_details:
+    if require_asset_details:
+        if summary.records_count > 0 and not summary.asset_details:
             return False
-        detail_symbols = {item.asset.upper() for item in summary.asset_details}
-        if detail_symbols and detail_symbols <= SETTLEMENT_ASSETS:
+        detail_symbols = {item.asset.strip().upper() for item in summary.asset_details}
+        if detail_symbols & SETTLEMENT_ASSETS:
             return False
 
     created_at = summary.created_at

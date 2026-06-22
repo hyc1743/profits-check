@@ -452,6 +452,83 @@ def test_funding_fees_api_refreshes_legacy_asset_details_that_only_have_settleme
     assert calls == [(start_ms, end_ms)]
 
 
+def test_funding_fees_api_refreshes_legacy_settlement_asset_details_even_with_zero_record_count(
+    client,
+) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class StubProvider:
+        async def collect_funding_fee_records(
+            self, start_time_ms: int, end_time_ms: int
+        ) -> list[FundingFeeRecord]:
+            calls.append((start_time_ms, end_time_ms))
+            return [
+                FundingFeeRecord(
+                    provider="binance",
+                    channel_name="Binance",
+                    amount=Decimal("1.25"),
+                    asset="USDT",
+                    symbol="ETHUSDT",
+                    timestamp_ms=start_time_ms,
+                )
+            ]
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    channel_response = client.post(
+        "/api/channels",
+        json={
+            "name": "Binance",
+            "provider": "binance",
+            "enabled": True,
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    assert channel_response.status_code == 201
+
+    start_time, end_time, start_ms, end_ms = date_bounds_ms("2024-07-01")
+    with client.app.state.session_factory() as session:
+        summary = DailyFundingFeeSummary(
+            date="2024-07-01",
+            start_time=start_time,
+            end_time=end_time,
+            received=Decimal("0"),
+            paid=Decimal("0"),
+            net=Decimal("0"),
+            records_count=0,
+            status="success",
+            created_at=end_time,
+            updated_at=end_time,
+        )
+        summary.asset_details = [
+            DailyFundingFeeAssetSummary(
+                channel_id=1,
+                channel_name="Binance",
+                provider="binance",
+                asset=" usdt ",
+                amount=Decimal("0"),
+                records_count=0,
+            )
+        ]
+        session.add(summary)
+        session.commit()
+
+    response = client.get("/api/funding-fees?date=2024-07-01")
+
+    assert response.status_code == 200
+    assert response.json()["details"] == [
+        {
+            "channelId": 1,
+            "channelName": "Binance",
+            "provider": "binance",
+            "symbol": "ETHUSDT",
+            "amount": "1.25000000",
+            "recordsCount": 1,
+        }
+    ]
+    assert calls == [(start_ms, end_ms)]
+
+
 def test_funding_fees_api_refreshes_partial_cache_created_before_day_closed(client) -> None:
     calls: list[tuple[int, int]] = []
 
