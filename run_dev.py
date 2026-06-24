@@ -236,6 +236,56 @@ def build_frontend_static_files(
     write_dependency_stamp(stamp_path, signature)
 
 
+def free_backend_port(port: int, env: dict[str, str]) -> None:
+    """Terminate any process already listening on the backend port.
+
+    A previous run can leave an orphaned uvicorn holding the port (e.g. the
+    controlling terminal closes and run_dev.py dies without terminating its
+    child). The next start would then fail to bind and silently keep serving the
+    OLD code. Freeing the port first guarantees a restart runs the current code.
+    """
+    pids: set[int] = set()
+    if which("lsof", path=env.get("PATH")):
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            pids.update(int(value) for value in result.stdout.split())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    if not pids and which("fuser", path=env.get("PATH")):
+        try:
+            result = subprocess.run(
+                ["fuser", f"{port}/tcp"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            pids.update(int(value) for value in result.stdout.split())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    pids.discard(os.getpid())
+    if not pids:
+        return
+
+    print(f"Port {port} is already in use by {sorted(pids)}; terminating stale process(es)...")
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    time.sleep(3)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    time.sleep(1)
+
+
 def start_process(
     name: str, command: list[str], cwd: Path, env: dict[str, str] | None = None
 ) -> subprocess.Popen[str]:
@@ -286,6 +336,7 @@ def main() -> int:
     build_frontend_static_files(FRONTEND_DIR, FRONTEND_BUILD_STAMP, env)
 
     print(f"Starting backend on {backend_url}")
+    free_backend_port(8200, env)
     backend = start_process(
         "backend",
         [
