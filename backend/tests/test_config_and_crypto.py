@@ -123,6 +123,71 @@ def test_sqlite_session_flushes_are_serialized(tmp_path: Path) -> None:
     assert errors == []
 
 
+def test_sqlite_write_lock_is_shared_by_session_factories(tmp_path: Path) -> None:
+    database_path = tmp_path / "shared-lock.db"
+    settings = AppSettings(database_url=f"sqlite+pysqlite:///{database_path}")
+    first_factory = build_session_factory(settings)
+    second_factory = build_session_factory(settings)
+    session = first_factory()
+    write_lock = session.info["write_lock"]
+    committed = threading.Event()
+    errors: list[BaseException] = []
+
+    def commit_from_second_factory() -> None:
+        try:
+            with second_factory() as other_session:
+                other_session.commit()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            committed.set()
+
+    write_lock.acquire()
+    try:
+        thread = threading.Thread(target=commit_from_second_factory)
+        thread.start()
+        assert not committed.wait(timeout=0.05)
+    finally:
+        write_lock.release()
+        session.close()
+
+    thread.join(timeout=1)
+    assert committed.is_set()
+    assert errors == []
+
+
+def test_sqlite_flush_holds_write_lock_until_transaction_finishes(tmp_path: Path) -> None:
+    database_path = tmp_path / "flush-transaction.db"
+    session_factory = build_session_factory(
+        AppSettings(database_url=f"sqlite+pysqlite:///{database_path}")
+    )
+    session = session_factory()
+    committed = threading.Event()
+    errors: list[BaseException] = []
+
+    def commit_in_another_session() -> None:
+        try:
+            with session_factory() as other_session:
+                other_session.commit()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            committed.set()
+
+    try:
+        session.flush()
+        thread = threading.Thread(target=commit_in_another_session)
+        thread.start()
+        assert not committed.wait(timeout=0.05)
+    finally:
+        session.rollback()
+        session.close()
+
+    thread.join(timeout=1)
+    assert committed.is_set()
+    assert errors == []
+
+
 def test_init_database_migrates_existing_sqlite_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "existing.db"
     engine = sa.create_engine(f"sqlite+pysqlite:///{database_path}")
