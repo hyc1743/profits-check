@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from alembic.config import Config
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -29,11 +29,27 @@ def ensure_sqlite_parent_directory(database_url: str) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def is_sqlite_database(database_url: str) -> bool:
+    return make_url(database_url).get_backend_name() == "sqlite"
+
+
+def configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+    finally:
+        cursor.close()
+
+
 def build_engine(settings: AppSettings):
     database_url = get_database_url(settings)
     ensure_sqlite_parent_directory(database_url)
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    return create_engine(database_url, future=True, connect_args=connect_args)
+    connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite_database(database_url) else {}
+    engine = create_engine(database_url, future=True, connect_args=connect_args)
+    if is_sqlite_database(database_url):
+        event.listen(engine, "connect", configure_sqlite_connection)
+    return engine
 
 
 def build_session_factory(settings: AppSettings) -> sessionmaker[Session]:

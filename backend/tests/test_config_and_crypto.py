@@ -41,6 +41,21 @@ def test_sqlite_parent_directory_is_created_for_missing_path(tmp_path: Path, mon
     assert (target_dir / "app.db").exists()
 
 
+def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
+    database_path = tmp_path / "wal.db"
+    session_factory = build_session_factory(
+        AppSettings(database_url=f"sqlite+pysqlite:///{database_path}")
+    )
+    engine = session_factory.kw["bind"]
+
+    with engine.connect() as connection:
+        journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
+        busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
+
+    assert journal_mode == "wal"
+    assert busy_timeout == 30000
+
+
 def test_init_database_migrates_existing_sqlite_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "existing.db"
     engine = sa.create_engine(f"sqlite+pysqlite:///{database_path}")
