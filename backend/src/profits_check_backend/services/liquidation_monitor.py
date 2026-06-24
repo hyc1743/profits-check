@@ -333,15 +333,16 @@ async def run_liquidation_monitor(
                         alert_count += 1
             adl_events.extend(detected_adl_events)
 
-        collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
-        try:
-            provider_margin_balance = (
-                await collect_margin_balance() if collect_margin_balance is not None else None
-            )
-            checked_margin_balance_channel_ids.add(channel.id)
-        except Exception:
-            failure_count += 1
-            provider_margin_balance = None
+        provider_margin_balance = None
+        if config.margin_balance_monitor_enabled:
+            collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
+            try:
+                provider_margin_balance = (
+                    await collect_margin_balance() if collect_margin_balance is not None else None
+                )
+                checked_margin_balance_channel_ids.add(channel.id)
+            except Exception:
+                failure_count += 1
 
         for provider_position in provider_positions:
             model = upsert_liquidation_position(
@@ -672,7 +673,7 @@ def upsert_liquidation_margin_balance(
     model.risk_percent = risk_percent
     model.threshold_percent = threshold_percent
     model.status = status
-    model.raw_payload_json = json.dumps(risk.raw_payload)
+    model.raw_payload_json = "{}"
     model.updated_at = now
     if status != "warning":
         model.last_alert_status = None

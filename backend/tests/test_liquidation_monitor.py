@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from profits_check_backend.models import Channel
+from profits_check_backend.models import Channel, LiquidationMarginBalance
 from profits_check_backend.providers.base import ContractMarginBalanceRisk, ContractPositionRisk
 from profits_check_backend.services.liquidation_monitor import run_liquidation_monitor
 
@@ -327,6 +327,18 @@ def test_manual_refresh_keeps_positions_when_margin_balance_collection_fails(cli
         },
     )
     assert create_response.status_code == 201
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": True,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": True,
+            "marginBalanceThresholdPercent": "70",
+            "checkIntervalSeconds": 60,
+            "alertIntervalSeconds": 900,
+        },
+    )
 
     refresh_response = client.post("/api/liquidation-monitor/refresh")
 
@@ -336,6 +348,48 @@ def test_manual_refresh_keeps_positions_when_margin_balance_collection_fails(cli
     assert payload["failureCount"] == 1
     assert len(payload["positions"]) == 1
     assert payload["positions"][0]["symbol"] == "LAB-USDT-SWAP"
+    assert payload["marginBalances"] == []
+
+
+def test_margin_balance_collection_is_skipped_when_monitor_is_disabled(client) -> None:
+    class StubProvider:
+        async def collect_contract_positions(self):
+            return [position()]
+
+        async def collect_contract_margin_balance(self):
+            raise AssertionError("margin balance should not be collected")
+
+    client.app.state.provider_builder = lambda **_: StubProvider()
+    client.post(
+        "/api/channels",
+        json={
+            "provider": "binance",
+            "kind": "cex",
+            "name": "Binance",
+            "publicConfig": {},
+            "secretConfig": {"apiKey": "key", "apiSecret": "secret"},
+        },
+    )
+    client.put(
+        "/api/liquidation-monitor",
+        json={
+            "monitorEnabled": True,
+            "positionMonitorEnabled": True,
+            "positionThresholdPercent": "5",
+            "marginBalanceMonitorEnabled": False,
+            "marginBalanceThresholdPercent": "70",
+            "checkIntervalSeconds": 10,
+            "alertIntervalSeconds": 120,
+        },
+    )
+
+    refresh_response = client.post("/api/liquidation-monitor/refresh")
+
+    assert refresh_response.status_code == 200
+    payload = refresh_response.json()
+    assert payload["status"] == "success"
+    assert payload["failureCount"] == 0
+    assert len(payload["positions"]) == 1
     assert payload["marginBalances"] == []
 
 
@@ -399,6 +453,10 @@ def test_manual_refresh_collects_margin_balance_risk_by_channel(client) -> None:
 
     assert get_response.status_code == 200
     assert get_response.json()["marginBalances"] == payload["marginBalances"]
+    with client.app.state.session_factory() as session:
+        stored = session.scalar(select(LiquidationMarginBalance))
+        assert stored is not None
+        assert stored.raw_payload_json == "{}"
 
 
 def test_manual_refresh_triggers_miaotixing_when_alerts_enabled(client, httpx_mock) -> None:
