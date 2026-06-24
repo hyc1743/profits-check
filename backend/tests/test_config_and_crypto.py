@@ -90,6 +90,39 @@ def test_sqlite_session_commits_are_serialized(tmp_path: Path) -> None:
     assert errors == []
 
 
+def test_sqlite_session_flushes_are_serialized(tmp_path: Path) -> None:
+    database_path = tmp_path / "serialized-flush.db"
+    session_factory = build_session_factory(
+        AppSettings(database_url=f"sqlite+pysqlite:///{database_path}")
+    )
+    session = session_factory()
+    write_lock = session.info["write_lock"]
+    flushed = threading.Event()
+    errors: list[BaseException] = []
+
+    def flush_in_another_thread() -> None:
+        try:
+            with session_factory() as other_session:
+                other_session.flush()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            flushed.set()
+
+    write_lock.acquire()
+    try:
+        thread = threading.Thread(target=flush_in_another_thread)
+        thread.start()
+        assert not flushed.wait(timeout=0.05)
+    finally:
+        write_lock.release()
+        session.close()
+
+    thread.join(timeout=1)
+    assert flushed.is_set()
+    assert errors == []
+
+
 def test_init_database_migrates_existing_sqlite_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "existing.db"
     engine = sa.create_engine(f"sqlite+pysqlite:///{database_path}")

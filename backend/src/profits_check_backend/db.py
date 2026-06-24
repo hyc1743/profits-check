@@ -16,6 +16,14 @@ from profits_check_backend.models import Base
 
 
 class WriteLockedSession(Session):
+    def flush(self, objects=None) -> None:
+        write_lock = self.info.get("write_lock")
+        if write_lock is None:
+            super().flush(objects)
+            return
+        with write_lock:
+            super().flush(objects)
+
     def commit(self) -> None:
         write_lock = self.info.get("write_lock")
         if write_lock is None:
