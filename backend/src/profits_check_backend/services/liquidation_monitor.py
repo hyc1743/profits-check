@@ -279,14 +279,56 @@ async def run_liquidation_monitor(
     alert_count = 0
     failure_count = 0
     adl_active = adl_monitor_active_at(config, now)
+    alerts_enabled = config.alert_enabled and bool(config.miao_code or config.bark_push_url)
+    active_channel_ids = {channel.id for channel in channels}
 
-    # Acquire the write lock before any read so the WAL snapshot is taken under
-    # the lock and stays valid through the writes (no SQLITE_BUSY_SNAPSHOT). The
-    # monitor runs with max_instances=1 and only a few seconds of HTTP, so holding
-    # the lock across this section is acceptable; reads are never blocked.
     write_section = getattr(session, "write_section", None)
-    section = write_section() if write_section is not None else contextlib.nullcontext()
-    with section:
+
+    def write_block():
+        return write_section() if write_section is not None else contextlib.nullcontext()
+
+    # Phase A: collect everything over the network FIRST, with no DB transaction
+    # open. Holding a SQLite transaction across slow exchange HTTP is what triggers
+    # "database is locked"; all network I/O must stay out of the write sections.
+    collected: list[
+        tuple[Channel, list[ContractPositionRisk], ContractMarginBalanceRisk | None, bool]
+    ] = []
+    for channel in channels:
+        if channel.provider not in MONITORED_PROVIDERS:
+            continue
+        try:
+            provider = provider_builder(
+                provider_type=channel.provider,
+                channel_name=channel.name,
+                config=decode_public_config(channel),
+                secrets=decode_secret_config(channel, cipher),
+            )
+            provider_positions = await provider.collect_contract_positions()
+        except Exception:
+            failure_count += 1
+            continue
+        provider_margin_balance: ContractMarginBalanceRisk | None = None
+        margin_checked = False
+        if config.margin_balance_monitor_enabled:
+            collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
+            try:
+                provider_margin_balance = (
+                    await collect_margin_balance() if collect_margin_balance is not None else None
+                )
+                margin_checked = True
+            except Exception:
+                failure_count += 1
+        collected.append((channel, provider_positions, provider_margin_balance, margin_checked))
+
+    # Phase B: short write transaction — reads, upserts, ADL detection and prune.
+    # No network I/O here (detect_adl_events only touches the DB), so the write
+    # lock is held only briefly. Alerts are decided here but sent in phase C.
+    # Alert messages are rendered here (phase B) from the fresh, in-memory models;
+    # rendering after the commit would reload DB values and change number formatting.
+    position_alerts: list[tuple[LiquidationPosition, str, str]] = []
+    margin_alerts: list[tuple[LiquidationMarginBalance, str, str]] = []
+    adl_alerts: list[tuple[AdlEvent, str, str]] = []
+    with write_block():
         existing = {
             (item.channel_id, item.symbol, item.side): item
             for item in session.scalars(select(LiquidationPosition))
@@ -297,22 +339,10 @@ async def run_liquidation_monitor(
         seen_keys: set[tuple[int, str, str]] = set()
         seen_margin_balance_channel_ids: set[int] = set()
         checked_margin_balance_channel_ids: set[int] = set()
-        active_channel_ids = {channel.id for channel in channels}
 
-        for channel in channels:
-            if channel.provider not in MONITORED_PROVIDERS:
-                continue
-            try:
-                provider = provider_builder(
-                    provider_type=channel.provider,
-                    channel_name=channel.name,
-                    config=decode_public_config(channel),
-                    secrets=decode_secret_config(channel, cipher),
-                )
-                provider_positions = await provider.collect_contract_positions()
-            except Exception:
-                failure_count += 1
-                continue
+        for channel, provider_positions, provider_margin_balance, margin_checked in collected:
+            if margin_checked:
+                checked_margin_balance_channel_ids.add(channel.id)
 
             if adl_active:
                 detected_adl_events = await detect_adl_events(
@@ -323,36 +353,13 @@ async def run_liquidation_monitor(
                     now=now,
                 )
                 for adl_event in detected_adl_events:
-                    if (
-                        config.alert_enabled
-                        and (config.miao_code or config.bark_push_url)
-                        and should_send_adl_alert(adl_event, now, config.alert_interval_seconds)
+                    if alerts_enabled and should_send_adl_alert(
+                        adl_event, now, config.alert_interval_seconds
                     ):
-                        alert_result = await send_liquidation_alert(
-                            miao_code=config.miao_code,
-                            bark_push_url=config.bark_push_url,
-                            title=adl_alert_title(adl_event),
-                            text=adl_alert_text(adl_event),
+                        adl_alerts.append(
+                            (adl_event, adl_alert_title(adl_event), adl_alert_text(adl_event))
                         )
-                        adl_event.last_alert_status = alert_result.status
-                        adl_event.last_alert_error = alert_result.error
-                        adl_event.last_alert_at = now if alert_result.attempted else None
-                        if alert_result.sent:
-                            alert_count += 1
                 adl_events.extend(detected_adl_events)
-
-            provider_margin_balance = None
-            if config.margin_balance_monitor_enabled:
-                collect_margin_balance = getattr(provider, "collect_contract_margin_balance", None)
-                try:
-                    provider_margin_balance = (
-                        await collect_margin_balance()
-                        if collect_margin_balance is not None
-                        else None
-                    )
-                    checked_margin_balance_channel_ids.add(channel.id)
-                except Exception:
-                    failure_count += 1
 
             for provider_position in provider_positions:
                 model = upsert_liquidation_position(
@@ -366,21 +373,12 @@ async def run_liquidation_monitor(
                 seen_keys.add((model.channel_id, model.symbol, model.side))
                 if (
                     config.position_monitor_enabled
-                    and config.alert_enabled
-                    and (config.miao_code or config.bark_push_url)
+                    and alerts_enabled
                     and should_send_alert(model, now, config.alert_interval_seconds)
                 ):
-                    alert_result = await send_liquidation_alert(
-                        miao_code=config.miao_code,
-                        bark_push_url=config.bark_push_url,
-                        title=position_alert_title(model),
-                        text=position_alert_text(model),
+                    position_alerts.append(
+                        (model, position_alert_title(model), position_alert_text(model))
                     )
-                    model.last_alert_status = alert_result.status
-                    model.last_alert_error = alert_result.error
-                    model.last_alert_at = now if alert_result.attempted else model.last_alert_at
-                    if alert_result.sent:
-                        alert_count += 1
                 elif model.status != "warning" and model.distance_percent is not None:
                     recovery_line = config.threshold_percent + RECOVERY_BUFFER_PERCENT
                     if model.distance_percent > recovery_line:
@@ -389,7 +387,7 @@ async def run_liquidation_monitor(
                         model.last_alert_at = None
                 positions.append(model)
 
-            if provider_margin_balance is not None:
+            if margin_checked and provider_margin_balance is not None:
                 margin_model = upsert_liquidation_margin_balance(
                     session=session,
                     channel=channel,
@@ -401,27 +399,19 @@ async def run_liquidation_monitor(
                 seen_margin_balance_channel_ids.add(channel.id)
                 if (
                     config.margin_balance_monitor_enabled
-                    and config.alert_enabled
-                    and (config.miao_code or config.bark_push_url)
+                    and alerts_enabled
                     and margin_model.status == "warning"
                     and should_send_margin_balance_alert(
                         margin_model, now, config.alert_interval_seconds
                     )
                 ):
-                    alert_result = await send_liquidation_alert(
-                        miao_code=config.miao_code,
-                        bark_push_url=config.bark_push_url,
-                        title=margin_balance_alert_title(channel),
-                        text=margin_balance_alert_text(
-                            channel,
-                            provider_margin_balance,
-                        ),
+                    margin_alerts.append(
+                        (
+                            margin_model,
+                            margin_balance_alert_title(channel),
+                            margin_balance_alert_text(channel, provider_margin_balance),
+                        )
                     )
-                    margin_model.last_alert_status = alert_result.status
-                    margin_model.last_alert_error = alert_result.error
-                    margin_model.last_alert_at = now if alert_result.attempted else None
-                    if alert_result.sent:
-                        alert_count += 1
                 margin_balances.append(margin_model)
 
         for key, position_item in existing.items():
@@ -438,6 +428,61 @@ async def run_liquidation_monitor(
         prune_adl_samples(session, now, max(config.adl_window_seconds * 2, 300))
     if write_section is None:
         session.commit()
+
+    # Phase C: send alerts over the network with no transaction or lock held.
+    position_alert_results: list[tuple[LiquidationPosition, AlertSendResult]] = []
+    margin_alert_results: list[tuple[LiquidationMarginBalance, AlertSendResult]] = []
+    adl_alert_results: list[tuple[AdlEvent, AlertSendResult]] = []
+    for adl_event, title, text in adl_alerts:
+        result = await send_liquidation_alert(
+            miao_code=config.miao_code,
+            bark_push_url=config.bark_push_url,
+            title=title,
+            text=text,
+        )
+        adl_alert_results.append((adl_event, result))
+        if result.sent:
+            alert_count += 1
+    for model, title, text in position_alerts:
+        result = await send_liquidation_alert(
+            miao_code=config.miao_code,
+            bark_push_url=config.bark_push_url,
+            title=title,
+            text=text,
+        )
+        position_alert_results.append((model, result))
+        if result.sent:
+            alert_count += 1
+    for margin_model, title, text in margin_alerts:
+        result = await send_liquidation_alert(
+            miao_code=config.miao_code,
+            bark_push_url=config.bark_push_url,
+            title=title,
+            text=text,
+        )
+        margin_alert_results.append((margin_model, result))
+        if result.sent:
+            alert_count += 1
+
+    # Phase D: short write transaction to persist alert outcomes.
+    if position_alert_results or margin_alert_results or adl_alert_results:
+        with write_block():
+            for model, result in position_alert_results:
+                model.last_alert_status = result.status
+                model.last_alert_error = result.error
+                if result.attempted:
+                    model.last_alert_at = now
+            for margin_model, result in margin_alert_results:
+                margin_model.last_alert_status = result.status
+                margin_model.last_alert_error = result.error
+                margin_model.last_alert_at = now if result.attempted else None
+            for adl_event, result in adl_alert_results:
+                adl_event.last_alert_status = result.status
+                adl_event.last_alert_error = result.error
+                adl_event.last_alert_at = now if result.attempted else None
+        if write_section is None:
+            session.commit()
+
     positions.sort(
         key=lambda item: (item.distance_percent is None, item.distance_percent or Decimal("999999"))
     )
