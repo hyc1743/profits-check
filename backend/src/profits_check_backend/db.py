@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import logging
 import threading
@@ -108,6 +109,30 @@ class WriteLockedSession(Session):
         if write_lock is not None:
             write_lock.release()
 
+    @contextlib.contextmanager
+    def write_section(self) -> Iterator[WriteLockedSession]:
+        """Run a read-modify-write under the write lock with a fresh snapshot.
+
+        Acquiring the lock *before* any read guarantees no other connection can
+        commit while this section runs, so the WAL read snapshot taken inside the
+        section stays valid through the write. This avoids SQLITE_BUSY_SNAPSHOT,
+        which busy_timeout cannot retry. The section must not perform slow network
+        I/O while holding the lock.
+        """
+        self._acquire_write_lock()
+        try:
+            # End any read transaction opened before the lock so the body's first
+            # read starts a brand-new snapshot. super().rollback() does not release
+            # the lock we just acquired (the overridden rollback() would).
+            super().rollback()
+            yield self
+            self.commit()
+        except BaseException:
+            self.rollback()
+            raise
+        finally:
+            self._release_write_lock()
+
 
 def ensure_sqlite_parent_directory(database_url: str) -> None:
     database_path = sqlite_database_path(database_url)
@@ -159,7 +184,9 @@ def configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
 def build_engine(settings: AppSettings):
     database_url = get_database_url(settings)
     ensure_sqlite_parent_directory(database_url)
-    connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite_database(database_url) else {}
+    connect_args = (
+        {"check_same_thread": False, "timeout": 30} if is_sqlite_database(database_url) else {}
+    )
     engine = create_engine(database_url, future=True, connect_args=connect_args)
     if is_sqlite_database(database_url):
         event.listen(engine, "connect", configure_sqlite_connection)

@@ -486,9 +486,9 @@ def ensure_daily_funding_fee_summary(
         require_asset_details=require_asset_details,
     ):
         return existing
-    if existing is not None:
-        session.delete(existing)
-        session.flush()
+    # Collect via network BEFORE opening a write transaction. Holding a SQLite
+    # write transaction (or a stale read snapshot) across slow exchange HTTP is
+    # what causes SQLITE_BUSY_SNAPSHOT under concurrent writers.
     summary = asyncio.run(
         collect_daily_funding_fee_summary(
             date=date,
@@ -497,6 +497,35 @@ def ensure_daily_funding_fee_summary(
             provider_builder=provider_builder,
         )
     )
+    write_section = getattr(session, "write_section", None)
+    if write_section is None:
+        return _persist_daily_funding_fee_summary(
+            session, date, summary, require_asset_details=require_asset_details
+        )
+    with write_section():
+        return _persist_daily_funding_fee_summary(
+            session, date, summary, require_asset_details=require_asset_details
+        )
+
+
+def _persist_daily_funding_fee_summary(
+    session: Session,
+    date: str,
+    summary: FundingFeeSummary,
+    *,
+    require_asset_details: bool,
+) -> DailyFundingFeeSummary:
+    # Re-read under the write lock with a fresh snapshot; another worker may have
+    # filled this date while we were collecting.
+    existing = get_daily_funding_fee_summary(session, date)
+    if existing is not None and is_daily_funding_fee_summary_complete(
+        existing,
+        require_asset_details=require_asset_details,
+    ):
+        return existing
+    if existing is not None:
+        session.delete(existing)
+        session.flush()
     return save_daily_funding_fee_summary(session, summary)
 
 
