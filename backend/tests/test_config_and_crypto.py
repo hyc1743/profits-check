@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -54,6 +55,39 @@ def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
 
     assert journal_mode == "wal"
     assert busy_timeout == 30000
+
+
+def test_sqlite_session_commits_are_serialized(tmp_path: Path) -> None:
+    database_path = tmp_path / "serialized.db"
+    session_factory = build_session_factory(
+        AppSettings(database_url=f"sqlite+pysqlite:///{database_path}")
+    )
+    session = session_factory()
+    write_lock = session.info["write_lock"]
+    committed = threading.Event()
+    errors: list[BaseException] = []
+
+    def commit_in_another_thread() -> None:
+        try:
+            with session_factory() as other_session:
+                other_session.commit()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            committed.set()
+
+    write_lock.acquire()
+    try:
+        thread = threading.Thread(target=commit_in_another_thread)
+        thread.start()
+        assert not committed.wait(timeout=0.05)
+    finally:
+        write_lock.release()
+        session.close()
+
+    thread.join(timeout=1)
+    assert committed.is_set()
+    assert errors == []
 
 
 def test_init_database_migrates_existing_sqlite_schema(tmp_path: Path) -> None:

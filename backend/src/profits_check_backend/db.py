@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,6 +13,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from alembic import command
 from profits_check_backend.config import AppSettings, get_database_url
 from profits_check_backend.models import Base
+
+
+class WriteLockedSession(Session):
+    def commit(self) -> None:
+        write_lock = self.info.get("write_lock")
+        if write_lock is None:
+            super().commit()
+            return
+        with write_lock:
+            super().commit()
 
 
 def ensure_sqlite_parent_directory(database_url: str) -> None:
@@ -53,7 +64,17 @@ def build_engine(settings: AppSettings):
 
 
 def build_session_factory(settings: AppSettings) -> sessionmaker[Session]:
-    return sessionmaker(bind=build_engine(settings), autoflush=False, autocommit=False, future=True)
+    database_url = get_database_url(settings)
+    session_options = {
+        "bind": build_engine(settings),
+        "autoflush": False,
+        "autocommit": False,
+        "future": True,
+    }
+    if is_sqlite_database(database_url):
+        session_options["class_"] = WriteLockedSession
+        session_options["info"] = {"write_lock": threading.RLock()}
+    return sessionmaker(**session_options)
 
 
 def init_database(session_factory: sessionmaker[Session]) -> None:
