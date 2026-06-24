@@ -24,6 +24,17 @@ COMMON_BIN_DIRS = [
 ]
 BACKEND_STAMP = BACKEND_DIR / ".venv" / ".profits-check-sync"
 FRONTEND_STAMP = FRONTEND_DIR / "node_modules" / ".profits-check-install"
+FRONTEND_BUILD_STAMP = FRONTEND_DIR / "dist" / ".profits-check-build"
+FRONTEND_BUILD_FILES = [
+    "package.json",
+    "bun.lock",
+    "index.html",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.app.json",
+    "tsconfig.node.json",
+]
+FRONTEND_BUILD_DIRS = ["src", "public"]
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
@@ -121,6 +132,29 @@ def dependency_signature(paths: list[Path]) -> str:
     return "\n".join(f"{path.name}:{file_digest(path)}" for path in paths)
 
 
+def frontend_build_inputs(frontend_dir: Path) -> list[Path]:
+    inputs: list[Path] = []
+    for file_name in FRONTEND_BUILD_FILES:
+        path = frontend_dir / file_name
+        if path.exists():
+            inputs.append(path)
+
+    for dir_name in FRONTEND_BUILD_DIRS:
+        root = frontend_dir / dir_name
+        if not root.exists():
+            continue
+        inputs.extend(path for path in root.rglob("*") if path.is_file())
+
+    return sorted(inputs, key=lambda path: path.relative_to(frontend_dir).as_posix())
+
+
+def frontend_build_signature(frontend_dir: Path = FRONTEND_DIR) -> str:
+    return "\n".join(
+        f"{path.relative_to(frontend_dir).as_posix()}:{file_digest(path)}"
+        for path in frontend_build_inputs(frontend_dir)
+    )
+
+
 def dependencies_are_current(required_path: Path, stamp_path: Path, signature: str) -> bool:
     return required_path.exists() and stamp_path.exists() and stamp_path.read_text() == signature
 
@@ -185,6 +219,23 @@ def clean_frontend_dist(dist_dir: Path) -> None:
             path.unlink()
 
 
+def build_frontend_static_files(
+    frontend_dir: Path = FRONTEND_DIR,
+    stamp_path: Path = FRONTEND_BUILD_STAMP,
+    env: dict[str, str] | None = None,
+) -> None:
+    dist_dir = frontend_dir / "dist"
+    signature = frontend_build_signature(frontend_dir)
+    if dependencies_are_current(dist_dir / "index.html", stamp_path, signature):
+        print("Frontend static files are already built.")
+        return
+
+    print("Building frontend static files...")
+    clean_frontend_dist(dist_dir)
+    run_command(["bun", "run", "build"], frontend_dir, env)
+    write_dependency_stamp(stamp_path, signature)
+
+
 def start_process(
     name: str, command: list[str], cwd: Path, env: dict[str, str] | None = None
 ) -> subprocess.Popen[str]:
@@ -232,9 +283,7 @@ def main() -> int:
         signature_paths=[FRONTEND_DIR / "package.json", FRONTEND_DIR / "bun.lock"],
     )
 
-    print("Building frontend static files...")
-    clean_frontend_dist(FRONTEND_DIR / "dist")
-    run_command(["bun", "run", "build"], FRONTEND_DIR, env)
+    build_frontend_static_files(FRONTEND_DIR, FRONTEND_BUILD_STAMP, env)
 
     print(f"Starting backend on {backend_url}")
     backend = start_process(

@@ -142,6 +142,71 @@ def test_clean_frontend_dist_preserves_server_hidden_files(tmp_path) -> None:
     assert not assets.exists()
 
 
+def test_build_frontend_static_files_skips_when_sources_are_unchanged(
+    tmp_path, monkeypatch
+) -> None:
+    run_dev = load_run_dev()
+    frontend = tmp_path / "frontend"
+    src = frontend / "src"
+    dist = frontend / "dist"
+    src.mkdir(parents=True)
+    dist.mkdir()
+    (frontend / "package.json").write_text("{}")
+    (frontend / "bun.lock").write_text("lock")
+    (frontend / "index.html").write_text("<div id=\"root\"></div>")
+    (frontend / "vite.config.ts").write_text("export default {}")
+    (frontend / "tsconfig.json").write_text("{}")
+    (frontend / "tsconfig.app.json").write_text("{}")
+    (frontend / "tsconfig.node.json").write_text("{}")
+    (src / "App.tsx").write_text("export function App() { return null }")
+    (dist / "index.html").write_text("<html></html>")
+
+    stamp = dist / ".profits-check-build"
+    stamp.write_text(run_dev.frontend_build_signature(frontend))
+    commands: list[list[str]] = []
+    monkeypatch.setattr(run_dev, "run_command", lambda command, _cwd, _env: commands.append(command))
+
+    run_dev.build_frontend_static_files(frontend, stamp, {"PATH": ""})
+
+    assert commands == []
+
+
+def test_build_frontend_static_files_rebuilds_when_sources_change(
+    tmp_path, monkeypatch
+) -> None:
+    run_dev = load_run_dev()
+    frontend = tmp_path / "frontend"
+    src = frontend / "src"
+    dist = frontend / "dist"
+    src.mkdir(parents=True)
+    dist.mkdir()
+    (frontend / "package.json").write_text("{}")
+    (frontend / "bun.lock").write_text("lock")
+    (frontend / "index.html").write_text("<div id=\"root\"></div>")
+    (frontend / "vite.config.ts").write_text("export default {}")
+    (frontend / "tsconfig.json").write_text("{}")
+    (frontend / "tsconfig.app.json").write_text("{}")
+    (frontend / "tsconfig.node.json").write_text("{}")
+    app = src / "App.tsx"
+    app.write_text("export function App() { return null }")
+    (dist / "index.html").write_text("<html></html>")
+
+    stamp = dist / ".profits-check-build"
+    stamp.write_text(run_dev.frontend_build_signature(frontend))
+    app.write_text("export function App() { return 'changed' }")
+    commands: list[tuple[list[str], Path]] = []
+    monkeypatch.setattr(
+        run_dev,
+        "run_command",
+        lambda command, cwd, _env: commands.append((command, cwd)),
+    )
+
+    run_dev.build_frontend_static_files(frontend, stamp, {"PATH": ""})
+
+    assert commands == [(["bun", "run", "build"], frontend)]
+    assert stamp.read_text() == run_dev.frontend_build_signature(frontend)
+
+
 def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
     run_dev = load_run_dev()
     commands: list[tuple[list[str], Path]] = []
@@ -166,6 +231,11 @@ def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
         lambda command, cwd, _env=None: commands.append((command, cwd)),
     )
     monkeypatch.setattr(run_dev, "clean_frontend_dist", lambda path: cleaned.append(path))
+    monkeypatch.setattr(
+        run_dev,
+        "build_frontend_static_files",
+        lambda frontend_dir, stamp_path, _env: commands.append((["build-frontend"], frontend_dir)),
+    )
     monkeypatch.setattr(run_dev.signal, "signal", lambda *_args, **_kwargs: None)
 
     def fake_start_process(name, command, cwd, _env=None):
@@ -176,8 +246,8 @@ def test_main_builds_frontend_and_starts_backend_only(monkeypatch) -> None:
 
     assert run_dev.main() == 0
 
-    assert cleaned == [run_dev.FRONTEND_DIR / "dist"]
-    assert (["bun", "run", "build"], run_dev.FRONTEND_DIR) in commands
+    assert cleaned == []
+    assert (["build-frontend"], run_dev.FRONTEND_DIR) in commands
     assert started == [
         (
             "backend",
