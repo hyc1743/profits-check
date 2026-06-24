@@ -69,6 +69,16 @@ _SQLITE_WRITE_LOCKS_GUARD = threading.Lock()
 
 
 class WriteLockedSession(Session):
+    def execute(self, statement, *args, **kwargs):
+        # Core DML run via Session.execute() (e.g. delete()/update()/insert())
+        # issues SQL straight to SQLite without going through flush()/commit().
+        # Acquire the write lock first so every writer takes the lock BEFORE the
+        # SQLite write lock, keeping a single consistent lock order (no AB-BA
+        # deadlock between this Python lock and SQLite's own write lock).
+        if getattr(statement, "is_dml", False):
+            self._acquire_write_lock()
+        return super().execute(statement, *args, **kwargs)
+
     def flush(self, objects=None) -> None:
         self._acquire_write_lock()
         super().flush(objects)
