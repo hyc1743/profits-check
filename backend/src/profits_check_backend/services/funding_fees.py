@@ -27,6 +27,9 @@ from profits_check_backend.services.channels import decode_public_config, decode
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATE_TIMEZONE = ZoneInfo("Asia/Shanghai")
 SETTLEMENT_ASSETS = {"USD", "USDT", "USDC", "BUSD", "FDUSD", "BTC", "ETH"}
+# Bound each provider's funding-fee fetch so a slow/hanging exchange API cannot
+# block the whole collection (and the daily summary) indefinitely.
+FUNDING_FEE_CHANNEL_TIMEOUT_SECONDS = 60.0
 logger = logging.getLogger("profits_check.funding_fees")
 
 
@@ -224,7 +227,10 @@ async def collect_daily_funding_fee_summary(
                 start_ms,
                 end_ms,
             )
-            records = await provider.collect_funding_fee_records(start_ms, end_ms)
+            records = await asyncio.wait_for(
+                provider.collect_funding_fee_records(start_ms, end_ms),
+                timeout=FUNDING_FEE_CHANNEL_TIMEOUT_SECONDS,
+            )
             duration_ms = int((time.perf_counter() - channel_started_at) * 1000)
             logger.info(
                 "funding_fees.channel_success channel_id=%s provider=%s name=%s "
@@ -644,7 +650,12 @@ async def collect_monthly_funding_fee_records(
             )
             records: list[FundingFeeRecord] = []
             for _, _, start_ms, end_ms in segments:
-                records.extend(await provider.collect_funding_fee_records(start_ms, end_ms))
+                records.extend(
+                    await asyncio.wait_for(
+                        provider.collect_funding_fee_records(start_ms, end_ms),
+                        timeout=FUNDING_FEE_CHANNEL_TIMEOUT_SECONDS,
+                    )
+                )
             return MonthlyFundingFeeCollection(records=records)
         except Exception as exc:
             logger.error(

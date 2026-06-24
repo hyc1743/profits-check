@@ -22,6 +22,9 @@ from profits_check_backend.providers.http import provider_http_client
 
 BYBIT_RATE_LIMIT_RETRY_SECONDS = 2.0
 BYBIT_RATE_LIMIT_MAX_RETRIES = 3
+# Bybit's transaction-log nextPageCursor can cycle back to earlier pages instead
+# of ending, so cap the pagination to a safe number of pages as a hard backstop.
+BYBIT_FUNDING_MAX_PAGES = 200
 BYBIT_RATE_LIMIT_RET_CODES = {10006, "10006"}
 
 
@@ -200,9 +203,10 @@ class BybitProvider(Provider):
         category = str(self.config.get("fundingCategory", self.config.get("category", "linear")))
         records: list[FundingFeeRecord] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
 
         async with provider_http_client() as client:
-            while True:
+            for _ in range(BYBIT_FUNDING_MAX_PAGES):
                 params = {
                     "accountType": "UNIFIED",
                     "category": category,
@@ -238,8 +242,12 @@ class BybitProvider(Provider):
                 next_cursor = (
                     str(result.get("nextPageCursor", "")) if isinstance(result, dict) else ""
                 )
-                if not next_cursor or next_cursor == cursor:
+                # Terminate on an empty cursor, an immediate repeat, or any cursor
+                # already requested — Bybit can return a cursor that cycles back to
+                # an earlier page, which would otherwise loop forever.
+                if not next_cursor or next_cursor == cursor or next_cursor in seen_cursors:
                     break
+                seen_cursors.add(next_cursor)
                 cursor = next_cursor
 
         return records
